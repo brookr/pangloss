@@ -45,18 +45,24 @@ export class Pangloss {
         throw new Error(`Invalid agents: ${invalidAgents.join(', ')}`);
       }
 
-      // Extract repo name from URL
-      const repoName = this.extractRepoName(options.repo_url);
-      
-      // Create agent requests
-      const agentRequests: AgentRequest[] = options.agents.map(agentId => ({
-        repo_url: options.repo_url,
-        feature_name: options.feature_name,
-        branch_name: `${repoName}/${options.feature_name}/${agentId}`,
-        llm_preset: this.config.llm_presets[agentId],
-        request_prompt: options.request_prompt,
-        github_token: process.env.GITHUB_TOKEN || this.config.github_token || ''
-      }));
+      // Create agent requests with sequential naming
+      const modelCounts: Record<string, number> = {};
+      const agentRequests: AgentRequest[] = options.agents.map(agentId => {
+        const preset = this.config.llm_presets[agentId];
+        const modelKey = `${preset.provider}-${preset.model}`;
+        
+        modelCounts[modelKey] = (modelCounts[modelKey] || 0) + 1;
+        const sequenceNumber = modelCounts[modelKey];
+        
+        return {
+          repo_url: options.repo_url,
+          feature_name: options.feature_name,
+          branch_name: `${options.feature_name}/${modelKey}-${sequenceNumber}`,
+          llm_preset: preset,
+          request_prompt: options.request_prompt,
+          github_token: process.env.GITHUB_TOKEN || this.config.github_token || ''
+        };
+      });
 
       spinner.text = `Spawning ${options.agents.length} agents in parallel...`;
       
@@ -95,7 +101,7 @@ export class Pangloss {
         }
       };
 
-      const finalBranch = `${repoName}/${options.feature_name}/final`;
+      const finalBranch = `${options.feature_name}/final`;
       
       await this.merger.mergeBestSolutions(
         successfulResults,
@@ -131,10 +137,6 @@ export class Pangloss {
     }
   }
 
-  private extractRepoName(repoUrl: string): string {
-    const match = repoUrl.match(/github\.com\/[^\/]+\/([^\/\.]+)/);
-    return match ? match[1] : 'unknown-repo';
-  }
 
   private displayAgentResults(results: AgentResult[]): void {
     console.log(chalk.cyan('\n📊 Agent Results:'));

@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'child_process';
-import { writeFile, readFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { existsSync } from 'fs';
-
-// LLM Client imports
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 class AgentRunner {
   constructor() {
@@ -18,9 +12,7 @@ class AgentRunner {
     this.branchName = process.env.BRANCH_NAME;
     this.llmProvider = process.env.LLM_PROVIDER;
     this.llmModel = process.env.LLM_MODEL;
-    this.llmTemperature = parseFloat(process.env.LLM_TEMPERATURE || '0.3');
-    this.maxTokens = parseInt(process.env.LLM_MAX_TOKENS || '4000');
-    this.systemPrompt = process.env.SYSTEM_PROMPT || '';
+    this.cliModel = process.env.CLI_MODEL || this.llmModel;
     this.requestPrompt = process.env.REQUEST_PROMPT;
     this.githubToken = process.env.GITHUB_TOKEN;
     this.timeoutMinutes = parseInt(process.env.TIMEOUT_MINUTES || '15');
@@ -28,28 +20,6 @@ class AgentRunner {
     this.workspaceDir = '/workspace';
     this.resultsDir = `/results/${this.agentId}`;
     this.startTime = Date.now();
-    
-    this.initializeLLMClient();
-  }
-
-  initializeLLMClient() {
-    switch (this.llmProvider) {
-      case 'openai':
-        this.llmClient = new OpenAI({
-          apiKey: process.env.OPENAI_API_KEY
-        });
-        break;
-      case 'anthropic':
-        this.llmClient = new Anthropic({
-          apiKey: process.env.ANTHROPIC_API_KEY
-        });
-        break;
-      case 'google':
-        this.llmClient = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        break;
-      default:
-        throw new Error(`Unsupported LLM provider: ${this.llmProvider}`);
-    }
   }
 
   async run() {
@@ -62,14 +32,11 @@ class AgentRunner {
       // Clone repository
       await this.cloneRepository();
       
-      // Analyze codebase
-      const codebaseContext = await this.analyzeCodebase();
+      // Generate code using CLI tool
+      await this.generateCodeWithCLI();
       
-      // Generate code using LLM
-      const generatedCode = await this.generateCode(codebaseContext);
-      
-      // Apply changes
-      const changedFiles = await this.applyChanges(generatedCode);
+      // Get list of changed files
+      const changedFiles = await this.getChangedFiles();
       
       // Run tests and validation
       const testResults = await this.runTests();
@@ -80,7 +47,7 @@ class AgentRunner {
       const metrics = await this.calculateMetrics(changedFiles);
       
       // Commit and push changes
-      await this.commitAndPush(changedFiles);
+      await this.commitAndPush();
       
       // Write results
       const result = {
@@ -151,129 +118,95 @@ class AgentRunner {
     });
   }
 
-  async analyzeCodebase() {
-    // Read key files to understand the codebase structure
-    const files = await this.findRelevantFiles();
-    const context = {
-      files: [],
-      structure: '',
-      technologies: []
-    };
+  async generateCodeWithCLI() {
+    const fullPrompt = `${this.requestPrompt}
 
-    for (const file of files.slice(0, 10)) { // Limit to avoid token limits
-      try {
-        const content = await readFile(join(this.workspaceDir, file), 'utf-8');
-        context.files.push({
-          path: file,
-          content: content.slice(0, 1000) // Truncate large files
-        });
-      } catch (error) {
-        // Skip files that can't be read
-      }
+Please implement the requested feature by making the necessary code changes. Work directly in the codebase and make all required modifications.`;
+
+    let cliCommand;
+    let cliArgs;
+
+    switch (this.llmProvider) {
+      case 'openai':
+        cliCommand = 'codex';
+        cliArgs = [
+          '--model', this.cliModel,
+          '--approval-mode', 'full-auto',
+          '--quiet',
+          '--prompt', fullPrompt
+        ];
+        break;
+        
+      case 'anthropic':
+        cliCommand = 'claude';
+        cliArgs = [
+          '--model', this.cliModel,
+          '--output-format', 'stream-json',
+          '-p', fullPrompt
+        ];
+        break;
+        
+      case 'google':
+        cliCommand = 'gemini';
+        cliArgs = [
+          '--model', this.cliModel,
+          '--prompt', fullPrompt
+        ];
+        break;
+        
+      default:
+        throw new Error(`Unsupported LLM provider: ${this.llmProvider}`);
     }
 
-    return context;
-  }
-
-  async findRelevantFiles() {
-    const extensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.go', '.rs'];
-    const importantFiles = ['package.json', 'requirements.txt', 'Cargo.toml', 'go.mod', 'README.md'];
-    
-    return new Promise((resolve) => {
-      const findProcess = spawn('find', [
-        this.workspaceDir,
-        '-type', 'f',
-        '(',
-        ...extensions.flatMap(ext => ['-name', `*${ext}`, '-o']),
-        ...importantFiles.flatMap(file => ['-name', file, '-o']),
-        ')',
-        '-not', '-path', '*/node_modules/*',
-        '-not', '-path', '*/.git/*'
-      ]);
-
-      let output = '';
-      findProcess.stdout.on('data', (data) => {
-        output += data.toString();
+    return new Promise((resolve, reject) => {
+      console.log(`Running: ${cliCommand} ${cliArgs.join(' ')}`);
+      
+      const cliProcess = spawn(cliCommand, cliArgs, {
+        cwd: this.workspaceDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: this.timeoutMinutes * 60 * 1000
       });
 
-      findProcess.on('close', () => {
-        const files = output.trim().split('\n').filter(f => f.length > 0);
-        resolve(files.map(f => f.replace(this.workspaceDir + '/', '')));
+      let stdout = '';
+      let stderr = '';
+
+      cliProcess.stdout?.on('data', (data) => {
+        stdout += data.toString();
+        process.stdout.write(data);
+      });
+
+      cliProcess.stderr?.on('data', (data) => {
+        stderr += data.toString();
+        process.stderr.write(data);
+      });
+
+      cliProcess.on('close', (code) => {
+        if (code === 0) {
+          console.log(`✅ ${cliCommand} completed successfully`);
+          resolve();
+        } else {
+          reject(new Error(`${cliCommand} failed with code ${code}\n${stderr}`));
+        }
+      });
+
+      cliProcess.on('error', (error) => {
+        reject(new Error(`Failed to start ${cliCommand}: ${error.message}`));
       });
     });
   }
 
-  async generateCode(codebaseContext) {
-    const prompt = `${this.systemPrompt}
-
-TASK: ${this.requestPrompt}
-
-CODEBASE CONTEXT:
-${JSON.stringify(codebaseContext, null, 2)}
-
-Please provide the code changes needed to implement the requested feature. Return your response as a JSON object with the following structure:
-{
-  "files": [
-    {
-      "path": "relative/path/to/file.js",
-      "action": "create|modify|delete",
-      "content": "full file content for create or modify actions"
-    }
-  ],
-  "explanation": "Brief explanation of the changes made"
-}`;
-
-    switch (this.llmProvider) {
-      case 'openai':
-        const openaiResponse = await this.llmClient.chat.completions.create({
-          model: this.llmModel,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: this.llmTemperature,
-          max_tokens: this.maxTokens
-        });
-        return JSON.parse(openaiResponse.choices[0].message.content);
-
-      case 'anthropic':
-        const anthropicResponse = await this.llmClient.messages.create({
-          model: this.llmModel,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: this.llmTemperature,
-          max_tokens: this.maxTokens
-        });
-        return JSON.parse(anthropicResponse.content[0].text);
-
-      case 'google':
-        const model = this.llmClient.getGenerativeModel({ model: this.llmModel });
-        const googleResponse = await model.generateContent(prompt);
-        return JSON.parse(googleResponse.response.text());
-
-      default:
-        throw new Error(`Unsupported LLM provider: ${this.llmProvider}`);
-    }
-  }
-
-  async applyChanges(generatedCode) {
-    const changedFiles = [];
-
-    for (const file of generatedCode.files) {
-      const filePath = join(this.workspaceDir, file.path);
+  async getChangedFiles() {
+    try {
+      const result = await this.runCommand(['git', 'diff', '--name-only', 'HEAD']);
+      const untracked = await this.runCommand(['git', 'ls-files', '--others', '--exclude-standard']);
       
-      switch (file.action) {
-        case 'create':
-        case 'modify':
-          await writeFile(filePath, file.content);
-          changedFiles.push(file.path);
-          break;
-        case 'delete':
-          if (existsSync(filePath)) {
-            await unlink(filePath);
-            changedFiles.push(file.path);
-          }
-          break;
-      }
+      const changed = result.stdout.trim().split('\n').filter(f => f.length > 0);
+      const untrackedFiles = untracked.stdout.trim().split('\n').filter(f => f.length > 0);
+      
+      return [...changed, ...untrackedFiles];
+    } catch (error) {
+      return [];
     }
-
-    return changedFiles;
   }
 
   async runTests() {
@@ -330,11 +263,11 @@ Please provide the code changes needed to implement the requested feature. Retur
       let stdout = '';
       let stderr = '';
 
-      process.stdout.on('data', (data) => {
+      process.stdout?.on('data', (data) => {
         stdout += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      process.stderr?.on('data', (data) => {
         stderr += data.toString();
       });
 
@@ -405,7 +338,7 @@ Please provide the code changes needed to implement the requested feature. Retur
     return metrics;
   }
 
-  async commitAndPush(changedFiles) {
+  async commitAndPush() {
     // Add changes
     await this.runCommand(['git', 'add', '.']);
     

@@ -15,10 +15,12 @@ RUN npm install -g \
     typescript \
     @playwright/test \
     eslint \
-    prettier \
-    @openai/codex \
-    @anthropic-ai/claude-code \
-    @google/gemini-cli
+    prettier
+
+# Install LLM CLI tools
+RUN npm install -g @openai/codex || echo "Warning: @openai/codex not available"
+RUN npm install -g @anthropic-ai/claude-code || curl -o /usr/local/bin/claude https://github.com/anthropics/claude-cli/releases/latest/download/claude-linux && chmod +x /usr/local/bin/claude
+RUN npm install -g @google/gemini-cli || echo "Warning: @google/gemini-cli not available"
 
 # Set up Playwright
 RUN npx playwright install-deps
@@ -27,7 +29,7 @@ RUN npx playwright install-deps
 WORKDIR /app
 
 # Copy agent runner
-COPY agent-runner-cli.js /app/
+COPY agent-runner.js /app/
 COPY package*.json /app/
 
 # Install dependencies
@@ -49,4 +51,4 @@ RUN chown -R agent:agent /app /results
 
 USER agent
 
-CMD ["node", "agent-runner-cli.js"]
+CMD ["node", "agent-runner.js"]
