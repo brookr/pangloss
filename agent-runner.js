@@ -41,7 +41,6 @@ class AgentRunner {
       // Run tests and validation
       const testResults = await this.runTests();
       const buildStatus = await this.runBuild();
-      const playwrightResults = await this.runPlaywright();
       
       // Calculate metrics
       const metrics = await this.calculateMetrics(changedFiles);
@@ -57,7 +56,6 @@ class AgentRunner {
         changes_made: changedFiles,
         test_results: testResults,
         build_status: buildStatus,
-        playwright_results: playwrightResults,
         metrics: {
           ...metrics,
           execution_time_ms: Date.now() - this.startTime
@@ -244,14 +242,6 @@ Please implement the requested feature by making the necessary code changes. Wor
     return 'failed';
   }
 
-  async runPlaywright() {
-    try {
-      const result = await this.runCommand(['npx', 'playwright', 'test']);
-      return this.parsePlaywrightResults(result.stdout);
-    } catch (error) {
-      return { passed: 0, failed: 0, total: 0, screenshots: [], duration_ms: 0 };
-    }
-  }
 
   async runCommand(command) {
     return new Promise((resolve) => {
@@ -294,19 +284,6 @@ Please implement the requested feature by making the necessary code changes. Wor
     };
   }
 
-  parsePlaywrightResults(output) {
-    // Parse Playwright test results
-    const passed = (output.match(/(\d+) passed/i) || [0, 0])[1];
-    const failed = (output.match(/(\d+) failed/i) || [0, 0])[1];
-    
-    return {
-      passed: parseInt(passed),
-      failed: parseInt(failed),
-      total: parseInt(passed) + parseInt(failed),
-      screenshots: [], // Would need to collect actual screenshots
-      duration_ms: 0
-    };
-  }
 
   async calculateMetrics(changedFiles) {
     const metrics = {

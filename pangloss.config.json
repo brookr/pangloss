@@ -57,7 +57,11 @@
       "system_prompt": "Use Gemini CLI with 2.0 Flash for fast code generation with built-in tool use."
     }
   },
-  "default_agents": ["codex-o3", "claude-sonnet", "gemini-pro"],
+  "default_agents": [
+    "codex-o3",
+    "claude-sonnet",
+    "gemini-pro"
+  ],
   "timeout_minutes": 15,
   "max_parallel_agents": 5
 }

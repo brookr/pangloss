@@ -40,7 +40,7 @@ export class DockerOrchestrator {
       services[`agent-${index}`] = {
         image: 'pangloss/agent:latest',
         build: {
-          context: '.',
+          context: '..',
           dockerfile: 'agent.Dockerfile'
         },
         environment: [

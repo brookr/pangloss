@@ -31,7 +31,6 @@ export interface AgentResult {
   changes_made: string[];
   test_results?: TestResults;
   build_status: 'success' | 'failed' | 'not_run';
-  playwright_results?: PlaywrightResults;
   metrics: AgentMetrics;
   error?: string;
 }
@@ -44,13 +43,6 @@ export interface TestResults {
   duration_ms: number;
 }
 
-export interface PlaywrightResults {
-  passed: number;
-  failed: number;
-  total: number;
-  screenshots: string[];
-  duration_ms: number;
-}
 
 export interface AgentMetrics {
   files_changed: number;
