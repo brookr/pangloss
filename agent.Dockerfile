@@ -29,16 +29,16 @@ COPY package*.json /app/
 # Install dependencies
 RUN npm install --production
 
-# Create results directory
-RUN mkdir -p /results
+# Create results and workspace directories
+RUN mkdir -p /results /workspace
 
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S agent && \
     adduser -S agent -u 1001 -G agent
 
-# Change ownership of app directory
-RUN chown -R agent:agent /app /results
+# Change ownership of app, results, and workspace directories
+RUN chown -R agent:agent /app /results /workspace
 
 USER agent
 
