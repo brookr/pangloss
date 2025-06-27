@@ -2,15 +2,22 @@
 
 > *"All is for the best in this best of all possible worlds"* - Voltaire
 
-Pangloss is a parallel LLM code generation system that runs multiple AI CLI agents simultaneously to generate code, then intelligently merges the best solutions into a single optimal output.
+Pangloss is a parallel LLM code generation system that runs multiple AI CLI
+agents simultaneously to generate code, then intelligently merges the best
+solutions into a single optimal output.
 
 ## Features
 
-- **Parallel Generation**: Runs multiple LLM CLI agents (Codex CLI, Claude Code, Gemini CLI) simultaneously
-- **Intelligent Merging**: Combines the best aspects of each solution using configurable strategies
-- **Docker Isolation**: Each agent runs in its own container with full environment setup
-- **GitHub Integration**: Automatically creates branches, runs tests, and creates pull requests
-- **Comprehensive Testing**: Includes build validation, unit tests, and Playwright E2E tests
+- **Parallel Generation**: Runs multiple LLM CLI agents (Codex CLI, Claude
+  Code, Gemini CLI) simultaneously
+- **Intelligent Merging**: Combines the best aspects of each solution using
+  configurable strategies
+- **Docker Isolation**: Each agent runs in its own container with full
+  environment setup
+- **GitHub Integration**: Automatically creates branches, runs tests, and
+  creates pull requests
+- **Comprehensive Testing**: Includes build validation, unit tests, and
+  Playwright E2E tests
 
 ## Quick Start
 
@@ -18,14 +25,12 @@ Pangloss is a parallel LLM code generation system that runs multiple AI CLI agen
 # Install dependencies
 npm install
 
-# Generate default configuration
-npm run dev config
-
 # Set up environment variables
-export GITHUB_TOKEN=your_github_token
-export OPENAI_API_KEY=your_openai_key
-export ANTHROPIC_API_KEY=your_anthropic_key
-export GOOGLE_API_KEY=your_google_key
+npm run dev setup    # Creates .env file from template
+# Edit .env file and add your API keys
+
+# Generate default configuration  
+npm run dev config
 
 # Generate code
 npm run dev generate \
@@ -79,13 +84,19 @@ Pangloss uses a `pangloss.config.json` file for configuration:
 ## How It Works
 
 1. **Agent Spawning**: Creates Docker containers for each LLM CLI agent
-2. **Parallel Generation**: Each agent clones the repo and runs CLI tools in non-interactive mode:
-   - **Codex CLI**: `--approval-mode full-auto --quiet` for complete automation
-   - **Claude Code CLI**: `-p` with `--output-format stream-json` for headless mode
+2. **Parallel Generation**: Each agent clones the repo and runs CLI tools in
+   non-interactive mode:
+   - **Codex CLI**: `--approval-mode full-auto --quiet` for complete
+     automation
+   - **Claude Code CLI**: `-p` with `--output-format stream-json` for headless
+     mode
    - **Gemini CLI**: `--prompt` flag for non-interactive execution
-3. **Validation**: Runs tests, builds, and Playwright E2E tests on each solution
-4. **Intelligent Merging**: Combines the best solutions using configurable strategies
-5. **PR Creation**: Creates a final branch and pull request with the optimal solution
+3. **Validation**: Runs tests, builds, and Playwright E2E tests on each
+   solution
+4. **Intelligent Merging**: Combines the best solutions using configurable
+   strategies
+5. **PR Creation**: Creates a final branch and pull request with the optimal
+   solution
 
 ## Merge Strategies
 
@@ -98,6 +109,7 @@ Pangloss uses a `pangloss.config.json` file for configuration:
 Branches are created with the pattern: `{repo-name}/{feature-name}/{agent-name}`
 
 Example:
+
 - `my-app/add-auth/codex-o3`
 - `my-app/add-auth/claude-sonnet`
 - `my-app/add-auth/gemini-pro`
@@ -113,12 +125,23 @@ Example:
 
 ## Environment Variables
 
+Pangloss uses a `.env` file for configuration. Create one using:
+
 ```bash
+# Generate .env template
+node dist/cli.js setup
+
+# Or manually create .env with:
 GITHUB_TOKEN=your_github_personal_access_token
 OPENAI_API_KEY=your_openai_api_key      # For Codex CLI
 ANTHROPIC_API_KEY=your_anthropic_api_key # For Claude Code CLI
 GEMINI_API_KEY=your_google_api_key       # For Gemini CLI
 GOOGLE_API_KEY=your_google_api_key       # Alternative for Gemini CLI
+
+# Optional configuration
+PANGLOSS_DEFAULT_AGENTS=codex-o3,claude-sonnet,gemini-pro
+PANGLOSS_TIMEOUT_MINUTES=15
+PANGLOSS_CONFIG_PATH=./pangloss.config.json
 ```
 
 ## Development
@@ -142,7 +165,7 @@ npm run lint
 
 ## Architecture
 
-```
+```text
 ┌─────────────────┐
 │   Pangloss CLI  │
 └─────────┬───────┘
