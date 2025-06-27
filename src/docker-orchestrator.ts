@@ -69,7 +69,6 @@ export class DockerOrchestrator {
     });
 
     return {
-      version: '3.8',
       services
     };
   }
