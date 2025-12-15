@@ -71,9 +71,10 @@ export function getDefaultConfig(): PanglossConfig {
         system_prompt: 'Use Gemini CLI with 2.0 Flash for fast code generation with built-in tool use.'
       }
     },
-    default_agents: ['codex-o3', 'claude-sonnet', 'gemini-pro'],
+    default_agents: ['codex-o3', 'claude-sonnet'],
     timeout_minutes: 15,
-    max_parallel_agents: 5
+    max_parallel_agents: 5,
+    planner_agent: 'claude-sonnet'
   };
 }
 

@@ -59,8 +59,7 @@
   },
   "default_agents": [
     "codex-o3",
-    "claude-sonnet",
-    "gemini-pro"
+    "claude-sonnet"
   ],
   "timeout_minutes": 15,
   "max_parallel_agents": 5

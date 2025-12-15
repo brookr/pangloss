@@ -1,44 +1,39 @@
-FROM node:20-alpine
+FROM mcr.microsoft.com/playwright:v1.40.0-jammy
 
 # Install system dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     git \
     openssh-client \
-    python3 \
-    py3-pip \
-    build-base
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install global packages and CLI tools
+# Install global Node packages
 RUN npm install -g \
     typescript \
     eslint \
-    prettier
-
-# Install LLM CLI tools
-RUN npm install -g @openai/codex || echo "Warning: @openai/codex not available"
-RUN npm install -g @anthropic-ai/claude-code || curl -o /usr/local/bin/claude https://github.com/anthropics/claude-cli/releases/latest/download/claude-linux && chmod +x /usr/local/bin/claude
-RUN npm install -g @google/gemini-cli || echo "Warning: @google/gemini-cli not available"
+    prettier \
+    @anthropic-ai/claude-code \
+    @openai/codex
 
 # Create app directory
 WORKDIR /app
 
-# Copy agent runner
+# Copy agent runner and package files
 COPY agent-runner.js /app/
 COPY package*.json /app/
 
 # Install dependencies
 RUN npm install --production
 
-# Create results and workspace directories
+# Create directories
 RUN mkdir -p /results /workspace
 
-
-# Create non-root user for security
-RUN addgroup -g 1001 -S agent && \
-    adduser -S agent -u 1001 -G agent
-
-# Change ownership of app, results, and workspace directories
-RUN chown -R agent:agent /app /results /workspace
+# Create non-root user
+# Playwright needs access to specific groups for browser usage
+RUN groupadd -r agent && useradd -r -g agent -G audio,video agent \
+    && mkdir -p /home/agent && chown -R agent:agent /home/agent \
+    && chown -R agent:agent /app /results /workspace
 
 USER agent
 

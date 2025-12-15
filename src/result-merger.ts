@@ -2,6 +2,8 @@ import { spawn } from 'child_process';
 import { AgentResult, MergeStrategy } from './types.js';
 
 export class ResultMerger {
+  private static readonly DEFAULT_WORKSPACE_DIR = 'final-workspace';
+
   async mergeBestSolutions(
     results: AgentResult[],
     finalBranch: string,
@@ -17,27 +19,30 @@ export class ResultMerger {
     // Apply merge strategy
     switch (strategy.type) {
       case 'best_overall':
-        await this.mergeBestOverall(rankedResults[0], finalBranch, repoUrl);
+        await this.mergeBestOverall(rankedResults[0]);
         break;
       case 'best_per_file':
-        await this.mergeBestPerFile(rankedResults, finalBranch, repoUrl);
+        await this.mergeBestPerFile(rankedResults);
         break;
       case 'composite':
-        await this.mergeComposite(rankedResults, finalBranch, repoUrl);
+        await this.mergeComposite(rankedResults);
         break;
     }
     
     // Push final branch
-    await this.pushBranch(finalBranch, repoUrl);
+    await this.pushBranch(finalBranch);
   }
 
-  private rankResults(results: AgentResult[], strategy: MergeStrategy): AgentResult[] {
+  private rankResults(
+    results: AgentResult[],
+    strategy: MergeStrategy
+  ): Array<AgentResult & { composite_score: number }> {
     return results
-      .map(result => ({
+      .map((result) => ({
         ...result,
         composite_score: this.calculateCompositeScore(result, strategy.weights)
       }))
-      .sort((a, b) => (b as any).composite_score - (a as any).composite_score);
+      .sort((a, b) => b.composite_score - a.composite_score);
   }
 
   private calculateCompositeScore(
@@ -63,7 +68,7 @@ export class ResultMerger {
   private async setupFinalBranch(repoUrl: string, finalBranch: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const gitProcess = spawn('git', [
-        'clone', repoUrl, 'final-workspace'
+        'clone', repoUrl, ResultMerger.DEFAULT_WORKSPACE_DIR
       ]);
 
       gitProcess.on('close', (code) => {
@@ -71,7 +76,7 @@ export class ResultMerger {
           // Create and checkout final branch
           const branchProcess = spawn('git', [
             'checkout', '-b', finalBranch
-          ], { cwd: 'final-workspace' });
+          ], { cwd: ResultMerger.DEFAULT_WORKSPACE_DIR });
 
           branchProcess.on('close', (branchCode) => {
             if (branchCode === 0) {
@@ -88,15 +93,13 @@ export class ResultMerger {
   }
 
   private async mergeBestOverall(
-    bestResult: AgentResult,
-    finalBranch: string,
-    repoUrl: string
+    bestResult: AgentResult
   ): Promise<void> {
     // Simple strategy: merge the entire best branch
     return new Promise((resolve, reject) => {
       const mergeProcess = spawn('git', [
         'merge', bestResult.branch_name, '--no-ff'
-      ], { cwd: 'final-workspace' });
+      ], { cwd: ResultMerger.DEFAULT_WORKSPACE_DIR });
 
       mergeProcess.on('close', (code) => {
         if (code === 0) {
@@ -105,12 +108,12 @@ export class ResultMerger {
           // Handle merge conflicts by taking the incoming changes
           const resolveProcess = spawn('git', [
             'checkout', '--theirs', '.'
-          ], { cwd: 'final-workspace' });
+          ], { cwd: ResultMerger.DEFAULT_WORKSPACE_DIR });
 
           resolveProcess.on('close', () => {
             const commitProcess = spawn('git', [
               'commit', '-m', `Merge best solution from ${bestResult.agent_id}`
-            ], { cwd: 'final-workspace' });
+            ], { cwd: ResultMerger.DEFAULT_WORKSPACE_DIR });
 
             commitProcess.on('close', (commitCode) => {
               if (commitCode === 0) {
@@ -126,32 +129,28 @@ export class ResultMerger {
   }
 
   private async mergeBestPerFile(
-    rankedResults: AgentResult[],
-    finalBranch: string,
-    repoUrl: string
+    rankedResults: AgentResult[]
   ): Promise<void> {
     // More complex: analyze each file and take the best version
     // This would require more sophisticated diff analysis
     // For now, fall back to best overall
-    await this.mergeBestOverall(rankedResults[0], finalBranch, repoUrl);
+    await this.mergeBestOverall(rankedResults[0]);
   }
 
   private async mergeComposite(
-    rankedResults: AgentResult[],
-    finalBranch: string,
-    repoUrl: string
+    rankedResults: AgentResult[]
   ): Promise<void> {
     // Advanced: combine different aspects from different solutions
     // This would require semantic code analysis
     // For now, fall back to best overall
-    await this.mergeBestOverall(rankedResults[0], finalBranch, repoUrl);
+    await this.mergeBestOverall(rankedResults[0]);
   }
 
-  private async pushBranch(finalBranch: string, repoUrl: string): Promise<void> {
+  private async pushBranch(finalBranch: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const pushProcess = spawn('git', [
         'push', 'origin', finalBranch
-      ], { cwd: 'final-workspace' });
+      ], { cwd: ResultMerger.DEFAULT_WORKSPACE_DIR });
 
       pushProcess.on('close', (code) => {
         if (code === 0) {

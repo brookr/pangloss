@@ -1,25 +1,24 @@
 import { spawn } from 'child_process';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
-import { PanglossConfig, AgentRequest, AgentResult, MergeStrategy } from './types.js';
+import { v4 as uuidv4 } from 'uuid';
+import { PanglossConfig, AgentRequest, AgentResult, PanglossPlan } from './types.js';
 import { DockerOrchestrator } from './docker-orchestrator.js';
-import { ResultMerger } from './result-merger.js';
+import { ResultAggregator } from './result-aggregator.js';
 
-export interface GenerateOptions {
+export interface RunOptions {
+  run_id?: string;
   repo_url: string;
-  feature_name: string;
-  request_prompt: string;
+  base_branch: string;
+  plan: PanglossPlan;
   agents: string[];
   timeout_minutes: number;
-  merge_strategy: string;
+  keep_branches?: boolean;
 }
 
-export interface GenerateResult {
+export interface RunResult {
   success: boolean;
-  final_branch?: string;
-  pr_url?: string;
+  run_id: string;
   agent_results: AgentResult[];
   error?: string;
 }
@@ -27,16 +26,17 @@ export interface GenerateResult {
 export class Pangloss {
   private config: PanglossConfig;
   private orchestrator: DockerOrchestrator;
-  private merger: ResultMerger;
+  private aggregator: ResultAggregator;
 
   constructor(config: PanglossConfig) {
     this.config = config;
     this.orchestrator = new DockerOrchestrator(config);
-    this.merger = new ResultMerger();
+    this.aggregator = new ResultAggregator();
   }
 
-  async generate(options: GenerateOptions): Promise<GenerateResult> {
-    const spinner = ora('Initializing Pangloss agents...').start();
+  async execute(options: RunOptions): Promise<RunResult> {
+    const runId = options.run_id || this.generateRunId();
+    console.log(chalk.blue(`\n🚀 Starting Pangloss Run: ${runId}`));
     
     try {
       // Validate agents
@@ -45,101 +45,158 @@ export class Pangloss {
         throw new Error(`Invalid agents: ${invalidAgents.join(', ')}`);
       }
 
-      // Create agent requests with sequential naming
-      const modelCounts: Record<string, number> = {};
-      const agentRequests: AgentRequest[] = options.agents.map(agentId => {
+      // 1. GENERATE PHASE
+      const genSpinner = ora('Phase 1/4: Generating solutions...').start();
+      
+      const genRequests: AgentRequest[] = options.agents.map(agentId => {
         const preset = this.config.llm_presets[agentId];
-        const modelKey = `${preset.provider}-${preset.model}`;
-        
-        modelCounts[modelKey] = (modelCounts[modelKey] || 0) + 1;
-        const sequenceNumber = modelCounts[modelKey];
-        
         return {
+          run_id: runId,
+          agent_preset_id: agentId,
           repo_url: options.repo_url,
-          feature_name: options.feature_name,
-          branch_name: `${options.feature_name}/${modelKey}-${sequenceNumber}`,
+          base_branch: options.base_branch,
+          branch_name: `pangloss/${runId}/${agentId}`,
+          mode: 'generate',
           llm_preset: preset,
-          request_prompt: options.request_prompt,
+          plan: options.plan,
           github_token: process.env.GITHUB_TOKEN || this.config.github_token || ''
         };
       });
 
-      spinner.text = `Spawning ${options.agents.length} agents in parallel...`;
-      
-      // Run agents in parallel
-      const agentResults = await this.orchestrator.runAgents(
-        agentRequests, 
-        options.timeout_minutes
-      );
+      const genResults = await this.orchestrator.runAgents(genRequests, options.timeout_minutes);
+      genSpinner.succeed(`Generation completed (${genResults.filter(r => r.success).length}/${genResults.length} success)`);
+      this.displayAgentResults(genResults);
 
-      spinner.succeed(`Completed ${agentResults.length} agent runs`);
-
-      // Display results
-      this.displayAgentResults(agentResults);
-
-      // Filter successful results
-      const successfulResults = agentResults.filter(result => result.success);
-      
-      if (successfulResults.length === 0) {
-        return {
-          success: false,
-          agent_results: agentResults,
-          error: 'No agents completed successfully'
-        };
+      // Check if any generation succeeded
+      const successfulGenResults = genResults.filter(r => r.success && r.build_status === 'success');
+      if (successfulGenResults.length === 0) {
+        throw new Error('No agents successfully generated valid code (build failed or agent failed).');
       }
 
-      // Merge results
-      const mergeSpinner = ora('Merging best solutions...').start();
+      // 2. JUDGE PHASE
+      const judgeSpinner = ora('Phase 2/4: Judging solutions...').start();
       
-      const mergeStrategy: MergeStrategy = {
-        type: options.merge_strategy as any,
-        weights: {
-          test_success: 0.4,
-          code_quality: 0.3,
-          performance: 0.2,
-          coverage: 0.1
-        }
+      const candidateBranches = successfulGenResults.map(r => r.branch_name);
+      
+      const judgeRequests: AgentRequest[] = options.agents.map(agentId => {
+        const preset = this.config.llm_presets[agentId];
+        return {
+          run_id: runId,
+          agent_preset_id: agentId,
+          repo_url: options.repo_url,
+          base_branch: options.base_branch,
+          branch_name: 'judge-runner', // Placeholder
+          mode: 'judge',
+          llm_preset: preset,
+          plan: options.plan,
+          github_token: process.env.GITHUB_TOKEN || this.config.github_token || '',
+          candidate_branches: candidateBranches
+        };
+      });
+
+      const judgeResults = await this.orchestrator.runAgents(judgeRequests, options.timeout_minutes);
+      judgeSpinner.succeed('Judging completed');
+
+      // 3. SELECTION & FINALIZATION PHASE
+      const finalizeSpinner = ora('Phase 3/4: Selecting winner & finalizing...').start();
+      
+      const winner = this.aggregator.selectWinner(genResults, judgeResults);
+      
+      if (!winner) {
+        throw new Error('Could not select a winner (no eligible candidates).');
+      }
+
+      finalizeSpinner.text = `Winner: ${winner.winner_agent_id} (${winner.reason}). Finalizing...`;
+      
+      // Finalize
+      const winnerPreset = this.config.llm_presets[winner.winner_agent_id];
+      const finalizeRequest: AgentRequest = {
+          run_id: runId,
+          agent_preset_id: winner.winner_agent_id,
+          repo_url: options.repo_url,
+          base_branch: options.base_branch,
+          branch_name: winner.winner_branch,
+          mode: 'finalize',
+          llm_preset: winnerPreset,
+          plan: options.plan,
+          github_token: process.env.GITHUB_TOKEN || this.config.github_token || '',
+          consolidated_recommendations: winner.consolidated_recommendations
       };
 
-      const finalBranch = `${options.feature_name}/final`;
-      
-      await this.merger.mergeBestSolutions(
-        successfulResults,
-        finalBranch,
-        mergeStrategy,
-        options.repo_url
-      );
+      const finalizeResults = await this.orchestrator.runAgents([finalizeRequest], options.timeout_minutes);
+      const finalResult = finalizeResults[0];
 
-      mergeSpinner.succeed('Solutions merged successfully');
+      if (!finalResult.success) {
+          finalizeSpinner.warn('Finalization step failed, falling back to pre-finalization state.');
+      } else {
+          finalizeSpinner.succeed('Finalization completed successfully.');
+      }
 
-      // Create PR (optional)
-      const prUrl = await this.createPullRequest(
-        options.repo_url,
-        finalBranch,
-        options.feature_name,
-        successfulResults
-      );
+      // 4. CLEANUP PHASE
+      if (!options.keep_branches) {
+        const cleanupSpinner = ora('Phase 4/4: Cleaning up branches...').start();
+        try {
+          const branchesToDelete = candidateBranches.filter(b => b !== winner.winner_branch);
+          await this.cleanupBranches(branchesToDelete);
+          cleanupSpinner.succeed(`Deleted ${branchesToDelete.length} non-winning branches`);
+        } catch (e) {
+          cleanupSpinner.warn(`Cleanup failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+      } else {
+        console.log(chalk.gray('Phase 4/4: Cleanup skipped (branches kept for inspection)'));
+      }
 
       return {
-        success: true,
-        final_branch: finalBranch,
-        pr_url: prUrl,
-        agent_results: agentResults
+        success: finalResult.success,
+        run_id: runId,
+        agent_results: [...genResults, ...judgeResults, ...finalizeResults]
       };
 
     } catch (error) {
-      spinner.fail('Generation failed');
+      console.error(chalk.red(`\n💥 Run failed: ${error instanceof Error ? error.message : 'Unknown error'}`));
       return {
         success: false,
+        run_id: runId,
         agent_results: [],
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   }
 
+  private async cleanupBranches(branches: string[]): Promise<void> {
+    if (branches.length === 0) return;
+
+    // Use git push origin --delete <branch>
+    // We assume the local environment has credentials to push to remote
+    // If not, we might need to rely on the agent container to do cleanup? 
+    // Or assume the user has authenticated gh/git locally.
+    
+    // Construct the command
+    // git push origin --delete branch1 branch2 ...
+    // Note: This runs on the HOST machine.
+    
+    return new Promise((resolve, reject) => {
+      const args = ['push', 'origin', '--delete', ...branches];
+      const proc = spawn('git', args);
+      
+      let stderr = '';
+      proc.stderr.on('data', d => stderr += d.toString());
+      
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`git push delete failed: ${stderr}`));
+      });
+    });
+  }
+
+  private generateRunId(): string {
+    const date = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); // YYYYMMDDHHmmss
+    const rand = uuidv4().slice(0, 4);
+    return `${date}-${rand}`;
+  }
 
   private displayAgentResults(results: AgentResult[]): void {
-    console.log(chalk.cyan('\n📊 Agent Results:'));
+    console.log(chalk.cyan('\n📊 Phase Results:'));
     
     results.forEach(result => {
       const status = result.success ? chalk.green('✅') : chalk.red('❌');
@@ -150,82 +207,13 @@ export class Pangloss {
       
       if (result.success) {
         console.log(`   Files: ${metrics.files_changed}, Lines: +${metrics.lines_added}/-${metrics.lines_removed}`);
-        console.log(`   Build: ${result.build_status}, Tests: ${result.test_results?.passed || 0}/${result.test_results?.total || 0}`);
-        console.log(`   Quality: ${metrics.quality_score.toFixed(2)}, Time: ${(metrics.execution_time_ms / 1000).toFixed(1)}s`);
+        if (result.mode === 'generate' || result.mode === 'finalize') {
+            console.log(`   Build: ${result.build_status}, Tests: ${result.test_results?.passed || 0}/${result.test_results?.total || 0}`);
+        }
+        console.log(`   Time: ${(metrics.execution_time_ms / 1000).toFixed(1)}s`);
       } else {
         console.log(`   Error: ${chalk.red(result.error || 'Unknown error')}`);
       }
     });
-  }
-
-  private async createPullRequest(
-    repoUrl: string, 
-    branchName: string, 
-    featureName: string,
-    agentResults: AgentResult[]
-  ): Promise<string | undefined> {
-    try {
-      const [owner, repo] = this.extractOwnerRepo(repoUrl);
-      
-      const prTitle = `feat: ${featureName}`;
-      const prBody = this.generatePRDescription(featureName, agentResults);
-      
-      // Use GitHub CLI to create PR
-      return new Promise((resolve, reject) => {
-        const ghProcess = spawn('gh', [
-          'pr', 'create',
-          '--repo', `${owner}/${repo}`,
-          '--head', branchName,
-          '--title', prTitle,
-          '--body', prBody
-        ]);
-        
-        let output = '';
-        ghProcess.stdout.on('data', (data) => {
-          output += data.toString();
-        });
-        
-        ghProcess.on('close', (code) => {
-          if (code === 0) {
-            const prUrl = output.trim();
-            resolve(prUrl);
-          } else {
-            console.warn('Could not create PR automatically');
-            resolve(undefined);
-          }
-        });
-      });
-    } catch (error) {
-      console.warn('Could not create PR:', error);
-      return undefined;
-    }
-  }
-
-  private extractOwnerRepo(repoUrl: string): [string, string] {
-    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/\.]+)/);
-    return match ? [match[1], match[2]] : ['', ''];
-  }
-
-  private generatePRDescription(featureName: string, agentResults: AgentResult[]): string {
-    const successfulAgents = agentResults.filter(r => r.success);
-    
-    return `## ${featureName}
-
-Generated using Pangloss with ${agentResults.length} parallel LLM agents.
-
-### Agent Results:
-${successfulAgents.map(agent => 
-  `- **${agent.agent_id}**: ${agent.metrics.files_changed} files, +${agent.metrics.lines_added}/-${agent.metrics.lines_removed} lines`
-).join('\n')}
-
-### Merged Solution:
-This PR contains the optimal combination of solutions from the successful agents above.
-
-**Tests**: ${successfulAgents.reduce((sum, a) => sum + (a.test_results?.passed || 0), 0)} passing
-**Build**: All agents built successfully
-**Quality Score**: ${(successfulAgents.reduce((sum, a) => sum + a.metrics.quality_score, 0) / successfulAgents.length).toFixed(2)}
-
----
-*Generated by Pangloss - finding the best of all possible solutions*`;
   }
 }

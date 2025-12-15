@@ -3,8 +3,12 @@
 import { config as loadDotenv } from 'dotenv';
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { mkdir, writeFile, readFile } from 'fs/promises';
+import { join } from 'path';
 import { Pangloss } from './pangloss.js';
 import { loadConfig } from './config.js';
+import { Planner } from './planner.js';
+import { PanglossPlan } from './types.js';
 
 // Load environment variables from .env file
 loadDotenv();
@@ -40,13 +44,15 @@ program
 program
   .command('generate')
   .description('Generate code using multiple LLM agents in parallel')
-  .requiredOption('-r, --repo <url>', 'GitHub repository URL')
-  .requiredOption('-f, --feature <name>', 'Feature name to implement')
-  .requiredOption('-p, --prompt <text>', 'Code generation prompt')
-  .option('-a, --agents <list>', 'Comma-separated list of LLM agents', process.env.PANGLOSS_DEFAULT_AGENTS || 'codex-o3,claude-sonnet,gemini-pro')
+  .option('-r, --repo <url>', 'GitHub repository URL')
+  .option('-f, --feature <name>', 'Feature name (optional, used if skipping planning)')
+  .option('-p, --prompt <text>', 'Code generation prompt (optional)')
+  .option('--plan-file <path>', 'Path to existing plan JSON')
+  .option('-a, --agents <list>', 'Comma-separated list of LLM agents', process.env.PANGLOSS_DEFAULT_AGENTS || 'codex-o3,claude-sonnet')
   .option('-c, --config <path>', 'Path to config file', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
   .option('--timeout <minutes>', 'Timeout per agent in minutes', process.env.PANGLOSS_TIMEOUT_MINUTES || '15')
   .option('--merge-strategy <strategy>', 'Merge strategy (best_overall|best_per_file|composite)', process.env.PANGLOSS_MERGE_STRATEGY || 'best_overall')
+  .option('--keep-branches', 'Keep non-winning branches for inspection')
   .action(async (options) => {
     try {
       console.log(chalk.blue('🤖 Pangloss - Finding the best of all possible solutions...\n'));
@@ -57,30 +63,65 @@ program
       
       const config = await loadConfig(options.config);
       const pangloss = new Pangloss(config);
+      const planner = new Planner(config);
+      
+      let plan: PanglossPlan;
+      let repoUrl = options.repo;
+      let baseBranch = 'HEAD'; // Default if not detected/provided
+
+      // Load or create plan
+      if (options.planFile) {
+        const planContent = await readFile(options.planFile, 'utf-8');
+        plan = JSON.parse(planContent);
+        console.log(chalk.blue(`Loaded plan from ${options.planFile}`));
+        
+        if (!repoUrl) {
+            throw new Error('Repo URL is required when using a plan file (or must be detected via git)');
+        }
+      } else {
+        // Interactive planning
+        const planningResult = await planner.createPlan(process.cwd());
+        plan = planningResult.plan;
+        repoUrl = planningResult.repoUrl;
+        baseBranch = planningResult.baseBranch;
+      }
       
       const agents = options.agents.split(',').map((a: string) => a.trim());
       
-      const result = await pangloss.generate({
-        repo_url: options.repo,
-        feature_name: options.feature,
-        request_prompt: options.prompt,
+      // Execute Run
+      const result = await pangloss.execute({
+        repo_url: repoUrl,
+        base_branch: baseBranch,
+        plan,
         agents,
         timeout_minutes: parseInt(options.timeout),
-        merge_strategy: options.mergeStrategy
+        keep_branches: options.keepBranches
       });
       
+      // Save run metadata
+      try {
+          const runDir = join('.pangloss', 'runs', result.run_id);
+          await mkdir(runDir, { recursive: true });
+          
+          await writeFile(join(runDir, 'plan.json'), JSON.stringify(plan, null, 2));
+          await writeFile(join(runDir, 'plan.md'), generateMarkdownPlan(plan));
+          await writeFile(join(runDir, 'run.json'), JSON.stringify({
+              id: result.run_id,
+              timestamp: new Date().toISOString(),
+              repo_url: repoUrl,
+              base_branch: baseBranch,
+              agents,
+              config
+          }, null, 2));
+          
+          console.log(chalk.gray(`\nRun artifacts saved to .pangloss/runs/${result.run_id}/`));
+      } catch (e) {
+          console.warn('Failed to save run artifacts', e);
+      }
+
       if (result.success) {
-        console.log(chalk.green(`✅ Generation completed! Final branch: ${result.final_branch}`));
-        console.log(chalk.cyan(`📊 Results from ${result.agent_results.length} agents:`));
-        
-        result.agent_results.forEach(agent => {
-          const status = agent.success ? chalk.green('✅') : chalk.red('❌');
-          console.log(`  ${status} ${agent.agent_id}: ${agent.metrics.files_changed} files changed`);
-        });
-        
-        if (result.pr_url) {
-          console.log(chalk.blue(`🔗 Pull Request: ${result.pr_url}`));
-        }
+        console.log(chalk.green(`\n✅ Run ${result.run_id} completed successfully!`));
+        // ...
       } else {
         console.error(chalk.red(`❌ Generation failed: ${result.error}`));
         process.exit(1);
@@ -122,5 +163,28 @@ program
       console.error(chalk.red(`❌ Failed to create .env file: ${error instanceof Error ? error.message : 'Unknown error'}`));
     }
   });
+
+function generateMarkdownPlan(plan: PanglossPlan): string {
+  return `# Implementation Plan
+
+## Summary
+${plan.summary}
+
+## Scope
+${plan.scope.map((s: string) => `- ${s}`).join('\n')}
+
+## Steps
+${plan.steps.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}
+
+## Acceptance Criteria
+${plan.acceptance_criteria.map((c: string) => `- [ ] ${c}`).join('\n')}
+
+## Original Request
+> ${plan.original_request}
+
+## Clarifications
+${plan.clarifications.map((qa: {question: string, answer: string}) => `**Q:** ${qa.question}\n**A:** ${qa.answer}`).join('\n\n')}
+`;
+}
 
 program.parse();

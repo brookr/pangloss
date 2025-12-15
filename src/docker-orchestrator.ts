@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { writeFile, mkdir, readFile } from 'fs/promises';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { existsSync } from 'fs';
 import YAML from 'yaml';
 import { PanglossConfig, AgentRequest, AgentResult } from './types.js';
@@ -33,38 +33,62 @@ export class DockerOrchestrator {
   }
 
   private generateDockerCompose(requests: AgentRequest[], timeoutMinutes: number) {
-    const services: Record<string, any> = {};
+    const services: Record<string, unknown> = {};
 
     requests.forEach((request, index) => {
-      const agentId = request.llm_preset.provider;
-      services[`agent-${index}`] = {
+      const agentId = request.agent_preset_id;
+      const serviceName = `agent-${index}`;
+      
+      // Host results path: .pangloss/runs/<run_id>/results/<mode>/<agent_id>
+      const hostResultsDir = join(this.workspaceDir, 'runs', request.run_id, 'results', request.mode, agentId);
+      
+      services[serviceName] = {
         image: 'pangloss/agent:latest',
         build: {
           context: '..',
           dockerfile: 'agent.Dockerfile'
         },
         environment: [
+          `RUN_ID=${request.run_id}`,
           `AGENT_ID=${agentId}`,
+          `MODE=${request.mode}`,
           `REPO_URL=${request.repo_url}`,
-          `FEATURE_NAME=${request.feature_name}`,
           `BRANCH_NAME=${request.branch_name}`,
+          `BASE_BRANCH=${request.base_branch}`,
           `LLM_PROVIDER=${request.llm_preset.provider}`,
           `LLM_MODEL=${request.llm_preset.model}`,
           `CLI_MODEL=${request.llm_preset.cli_model || ''}`,
           `LLM_TEMPERATURE=${request.llm_preset.temperature}`,
           `LLM_MAX_TOKENS=${request.llm_preset.max_tokens || 4000}`,
           `SYSTEM_PROMPT=${request.llm_preset.system_prompt || ''}`,
-          `REQUEST_PROMPT=${request.request_prompt}`,
+          `PLAN_CONTENT=${JSON.stringify(request.plan)}`,
+          `CANDIDATE_BRANCHES=${request.candidate_branches ? JSON.stringify(request.candidate_branches) : ''}`,
+          `CONSOLIDATED_RECOMMENDATIONS=${request.consolidated_recommendations ? JSON.stringify(request.consolidated_recommendations) : ''}`,
           `GITHUB_TOKEN=${request.github_token}`,
-          `TIMEOUT_MINUTES=${timeoutMinutes}`
+          `TIMEOUT_MINUTES=${timeoutMinutes}`,
+          `OPENAI_API_KEY=${process.env.OPENAI_API_KEY || ''}`,
+          `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}`,
+          `GEMINI_API_KEY=${process.env.GEMINI_API_KEY || ''}`
         ],
         volumes: [
-          `${this.workspaceDir}/results:/results`,
-          `${this.workspaceDir}/ssh:/root/.ssh:ro`
+          `${hostResultsDir}:/results`,
+          `${join(this.workspaceDir, 'ssh')}:/root/.ssh:ro`
         ],
         working_dir: '/app',
         command: ['node', 'agent-runner.js'],
-        restart: 'no'
+        restart: 'no',
+        deploy: {
+          resources: {
+            limits: {
+              cpus: '4.0',
+              memory: '2G'
+            },
+            reservations: {
+              cpus: '1.0',
+              memory: '512M'
+            }
+          }
+        }
       };
     });
 
@@ -78,7 +102,7 @@ export class DockerOrchestrator {
       `GITHUB_TOKEN=${requests[0]?.github_token || process.env.GITHUB_TOKEN || ''}`,
       `OPENAI_API_KEY=${process.env.OPENAI_API_KEY || ''}`,
       `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}`,
-      `GOOGLE_API_KEY=${process.env.GOOGLE_API_KEY || ''}`
+      `GEMINI_API_KEY=${process.env.GEMINI_API_KEY || ''}`
     ];
 
     await writeFile(join(this.workspaceDir, '.env'), envVars.join('\n'));
@@ -86,48 +110,55 @@ export class DockerOrchestrator {
 
   private async executeDockerCompose(requests: AgentRequest[]): Promise<AgentResult[]> {
     return new Promise((resolve, reject) => {
-      const dockerProcess = spawn('docker-compose', [
-        '-f', join(this.workspaceDir, 'docker-compose.yml'),
-        'up', '--build'
-      ], {
-        cwd: this.workspaceDir,
-        stdio: ['inherit', 'pipe', 'pipe']
-      });
+      // Ensure results directories exist
+      const runId = requests[0].run_id;
+      const setupPromise = Promise.all(requests.map(req => {
+        const dir = join(this.workspaceDir, 'runs', runId, 'results', req.mode, req.agent_preset_id);
+        return mkdir(dir, { recursive: true });
+      }));
 
-      let stdout = '';
-      let stderr = '';
+      setupPromise.then(() => {
+        const dockerProcess = spawn('docker-compose', [
+          '-f', join(this.workspaceDir, 'docker-compose.yml'),
+          'up', '--build'
+        ], {
+          cwd: this.workspaceDir,
+          stdio: ['inherit', 'pipe', 'pipe']
+        });
 
-      dockerProcess.stdout.on('data', (data) => {
-        stdout += data.toString();
-        process.stdout.write(data);
-      });
+        let stderr = '';
 
-      dockerProcess.stderr.on('data', (data) => {
-        stderr += data.toString();
-        process.stderr.write(data);
-      });
+        dockerProcess.stdout.on('data', (data) => {
+          process.stdout.write(data);
+        });
 
-      dockerProcess.on('close', async (code) => {
-        if (code === 0) {
-          try {
-            const results = await this.collectResults(requests);
-            resolve(results);
-          } catch (error) {
-            reject(error);
+        dockerProcess.stderr.on('data', (data) => {
+          stderr += data.toString();
+          process.stderr.write(data);
+        });
+
+        dockerProcess.on('close', async (code) => {
+          if (code === 0) {
+            try {
+              const results = await this.collectResults(requests);
+              resolve(results);
+            } catch (error) {
+              reject(error);
+            }
+          } else {
+            reject(new Error(`Docker compose failed with code ${code}\n${stderr}`));
           }
-        } else {
-          reject(new Error(`Docker compose failed with code ${code}\n${stderr}`));
-        }
-      });
+        });
+      }).catch(reject);
     });
   }
 
   private async collectResults(requests: AgentRequest[]): Promise<AgentResult[]> {
     const results: AgentResult[] = [];
-    const resultsDir = join(this.workspaceDir, 'results');
-
-    for (let i = 0; i < requests.length; i++) {
-      const agentResultPath = join(resultsDir, `agent-${i}`, 'result.json');
+    
+    for (const request of requests) {
+      const resultsDir = join(this.workspaceDir, 'runs', request.run_id, 'results', request.mode, request.agent_preset_id);
+      const agentResultPath = join(resultsDir, 'result.json');
       
       try {
         if (existsSync(agentResultPath)) {
@@ -137,8 +168,10 @@ export class DockerOrchestrator {
         } else {
           // Agent didn't complete - create failed result
           results.push({
-            agent_id: requests[i].llm_preset.provider,
-            branch_name: requests[i].branch_name,
+            run_id: request.run_id,
+            agent_id: request.agent_preset_id,
+            branch_name: request.branch_name,
+            mode: request.mode,
             success: false,
             changes_made: [],
             build_status: 'not_run',
@@ -155,8 +188,10 @@ export class DockerOrchestrator {
         }
       } catch (error) {
         results.push({
-          agent_id: requests[i].llm_preset.provider,
-          branch_name: requests[i].branch_name,
+          run_id: request.run_id,
+          agent_id: request.agent_preset_id,
+          branch_name: request.branch_name,
+          mode: request.mode,
           success: false,
           changes_made: [],
           build_status: 'not_run',

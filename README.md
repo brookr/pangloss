@@ -2,22 +2,17 @@
 
 > *"All is for the best in this best of all possible worlds"* - Voltaire
 
-Pangloss is a parallel LLM code generation system that runs multiple AI CLI
-agents simultaneously to generate code, then intelligently merges the best
-solutions into a single optimal output.
+Pangloss is a parallel LLM code generation system that orchestrates multiple AI agents to solve coding tasks. It runs agents in parallel, has them cross-evaluate each other's work ("Judging"), selects the best solution, and then refines it based on peer recommendations ("Finalization").
 
 ## Features
 
-- **Parallel Generation**: Runs multiple LLM CLI agents (Codex CLI, Claude
-  Code, Gemini CLI) simultaneously
-- **Intelligent Merging**: Combines the best aspects of each solution using
-  configurable strategies
-- **Docker Isolation**: Each agent runs in its own container with full
-  environment setup
-- **GitHub Integration**: Automatically creates branches, runs tests, and
-  creates pull requests
-- **Comprehensive Testing**: Includes build validation, unit tests, and
-  Playwright E2E tests
+- **Interactive Planning**: Collaborates with you to define a detailed implementation plan and acceptance criteria before writing any code.
+- **Parallel Generation**: Runs multiple agents (Codex, Claude, etc.) simultaneously in isolated Docker containers to implement the plan.
+- **Cross-Agent Judging**: Each agent reviews and scores every other agent's solution against the plan and test results.
+- **Intelligent Selection**: Automatically picks the best solution based on weighted scores, test pass rates, and build status.
+- **Automated Finalization**: Applies consolidated feedback from the judging phase to polish the winning solution.
+- **Docker Isolation**: Full environment separation for every agent run.
+- **Playwright Support**: Native support for E2E testing with Playwright.
 
 ## Quick Start
 
@@ -27,176 +22,82 @@ npm install
 
 # Set up environment variables
 npm run dev setup    # Creates .env file from template
-# Edit .env file and add your API keys
+# Edit .env file and add your API keys (GITHUB_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY)
 
 # Generate default configuration  
 npm run dev config
 
-# Generate code
-npm run dev generate \
-  --repo https://github.com/user/project \
-  --feature "add-user-authentication" \
-  --prompt "Add JWT-based user authentication with login/logout endpoints"
+# Start a new run (Interactive Mode)
+# run this from the root of the git repo you want to modify
+pangloss generate
 ```
 
 ## Usage
 
-### Basic Generation
+### Interactive Mode (Recommended)
+
+Simply run `pangloss generate` in your target repository. Pangloss will:
+1. Detect your repository context.
+2. Ask what change you want to make.
+3. Ask clarifying questions to refine requirements.
+4. Generate a detailed Plan for your approval.
+5. Kick off the parallel generation -> judging -> finalization pipeline.
+
+### Advanced Usage
 
 ```bash
-pangloss generate \
-  --repo https://github.com/user/project \
-  --feature "feature-name" \
-  --prompt "Detailed description of what to implement"
+# Skip planning by providing a pre-existing plan file
+pangloss generate --plan-file ./my-plan.json
+
+# Specify specific agents
+pangloss generate --agents "codex-o3,claude-sonnet"
+
+# Customize timeouts
+pangloss generate --timeout 30
+
+# Keep non-winning branches for inspection
+pangloss generate --keep-branches
 ```
 
-### Advanced Options
+## Architecture
 
-```bash
-pangloss generate \
-  --repo https://github.com/user/project \
-  --feature "add-dark-mode" \
-  --prompt "Add dark mode toggle to the UI with system preference detection" \
-  --agents "codex-o3,claude-sonnet,gemini-pro" \
-  --timeout 20 \
-  --merge-strategy "best_per_file"
-```
+Pangloss executes a 4-phase pipeline for every run:
 
-### Configuration
+1.  **GENERATE**: $N$ agents run in parallel containers. Each clones the repo, creates a unique branch, implements the plan, writes tests, and pushes changes.
+2.  **JUDGE**: $N$ agents run in parallel as judges. Each judge checks out every candidate branch, runs validation (build/test/e2e), and uses an LLM to score the solution and provide recommendations.
+3.  **FINALIZE**: The system aggregates scores to pick a winner. A finalizer agent runs on the winning branch to apply consolidated recommendations from the judges and ensure all tests pass.
+4.  **CLEANUP**: Non-winning branches are deleted from the remote (unless `--keep-branches` is used).
 
-Pangloss uses a `pangloss.config.json` file for configuration:
+## Configuration
+
+Pangloss uses `pangloss.config.json`. You can define custom LLM presets and default agents.
 
 ```json
 {
   "llm_presets": {
-    "codex": {
-      "provider": "openai",
-      "model": "gpt-4",
-      "temperature": 0.2,
-      "system_prompt": "You are a precise code generator..."
-    }
+    "codex-o3": { "provider": "openai", "model": "codex-cli", "cli_model": "o3", ... },
+    "claude-sonnet": { "provider": "anthropic", "model": "claude-code-cli", ... }
   },
-  "default_agents": ["codex", "claude-sonnet"],
-  "timeout_minutes": 15
+  "default_agents": ["codex-o3", "claude-sonnet"],
+  "planner_agent": "claude-sonnet"
 }
 ```
-
-## How It Works
-
-1. **Agent Spawning**: Creates Docker containers for each LLM CLI agent
-2. **Parallel Generation**: Each agent clones the repo and runs CLI tools in
-   non-interactive mode:
-   - **Codex CLI**: `--approval-mode full-auto --quiet` for complete
-     automation
-   - **Claude Code CLI**: `-p` with `--output-format stream-json` for headless
-     mode
-   - **Gemini CLI**: `--prompt` flag for non-interactive execution
-3. **Validation**: Runs tests, builds, and Playwright E2E tests on each
-   solution
-4. **Intelligent Merging**: Combines the best solutions using configurable
-   strategies
-5. **PR Creation**: Creates a final branch and pull request with the optimal
-   solution
-
-## Merge Strategies
-
-- **best_overall**: Takes the single best-performing solution
-- **best_per_file**: Combines the best version of each modified file
-- **composite**: Advanced merging that combines complementary features
-
-## Branch Naming
-
-Branches are created with the pattern: `{repo-name}/{feature-name}/{agent-name}`
-
-Example:
-
-- `my-app/add-auth/codex-o3`
-- `my-app/add-auth/claude-sonnet`
-- `my-app/add-auth/gemini-pro`
-- `my-app/add-auth/final` (merged result)
 
 ## Requirements
 
 - Node.js 20+
 - Docker and Docker Compose
-- Git and GitHub CLI (`gh`)
-- CLI tools: OpenAI Codex CLI, Claude Code CLI, Gemini CLI
-- API keys for desired LLM providers
-
-## Environment Variables
-
-Pangloss uses a `.env` file for configuration. Create one using:
-
-```bash
-# Generate .env template
-node dist/cli.js setup
-
-# Or manually create .env with:
-GITHUB_TOKEN=your_github_personal_access_token
-OPENAI_API_KEY=your_openai_api_key      # For Codex CLI
-ANTHROPIC_API_KEY=your_anthropic_api_key # For Claude Code CLI
-GEMINI_API_KEY=your_google_api_key       # For Gemini CLI
-GOOGLE_API_KEY=your_google_api_key       # Alternative for Gemini CLI
-
-# Optional configuration
-PANGLOSS_DEFAULT_AGENTS=codex-o3,claude-sonnet,gemini-pro
-PANGLOSS_TIMEOUT_MINUTES=15
-PANGLOSS_CONFIG_PATH=./pangloss.config.json
-```
+- Git
+- API Keys for OpenAI and/or Anthropic
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Build TypeScript
 npm run build
-
-# Run in development mode
-npm run dev
-
-# Run tests
 npm test
-
-# Lint code
-npm run lint
-```
-
-## Architecture
-
-```text
-┌─────────────────┐
-│   Pangloss CLI  │
-└─────────┬───────┘
-          │
-          ▼
-┌─────────────────┐
-│  Orchestrator   │
-└─────────┬───────┘
-          │
-          ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Agent 1       │    │   Agent 2       │    │   Agent 3       │
-│   (Docker)      │    │   (Docker)      │    │   (Docker)      │
-│                 │    │                 │    │                 │
-│ - Clone repo    │    │ - Clone repo    │    │ - Clone repo    │
-│ - Generate code │    │ - Generate code │    │ - Generate code │
-│ - Run tests     │    │ - Run tests     │    │ - Run tests     │
-│ - Push branch   │    │ - Push branch   │    │ - Push branch   │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          ▼                      ▼                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Result Merger                               │
-│                                                                 │
-│ - Analyze all solutions                                         │
-│ - Score and rank results                                        │
-│ - Merge best solutions                                          │
-│ - Create final branch and PR                                    │
-└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT
