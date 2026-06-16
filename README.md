@@ -20,9 +20,12 @@ Pangloss is a parallel LLM code generation system that orchestrates multiple AI 
 # Install dependencies
 npm install
 
+# Build
+npm run build
+
 # Set up environment variables
 npm run dev setup    # Creates .env file from template
-# Edit .env file and add your API keys (GITHUB_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY)
+# Edit .env file and add your API keys (GITHUB_TOKEN + at least one LLM key)
 
 # Generate default configuration  
 npm run dev config
@@ -30,6 +33,40 @@ npm run dev config
 # Start a new run (Interactive Mode)
 # run this from the root of the git repo you want to modify
 pangloss generate
+```
+
+## Setup
+
+### Requirements
+
+- Node.js 20+
+- Docker and Docker Compose
+- Git
+
+### API Keys / Environment Variables
+
+Pangloss needs:
+
+- **GitHub**
+  - `GITHUB_TOKEN` (required) — used for cloning/pushing branches.
+
+- **LLM Provider Keys** (at least one)
+  - `OPENAI_API_KEY` — required for `codex-*` agents.
+  - `ANTHROPIC_API_KEY` — required for `claude-*` agents.
+  - `GEMINI_API_KEY` — required for `gemini-*` agents (Gemini API key from https://aistudio.google.com/apikey).
+
+Vertex AI (optional alternative for Gemini CLI):
+
+- `GOOGLE_API_KEY`
+- `GOOGLE_GENAI_USE_VERTEXAI=true`
+- `GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>`
+
+### Using the `gemini-pro` agent
+
+`gemini-pro` is available as an agent preset. To run it:
+
+```bash
+pangloss generate --agents "codex-o3,claude-sonnet,gemini-pro"
 ```
 
 ## Usage
@@ -88,7 +125,7 @@ Pangloss uses `pangloss.config.json`. You can define custom LLM presets and defa
 - Node.js 20+
 - Docker and Docker Compose
 - Git
-- API Keys for OpenAI and/or Anthropic
+- API Keys for GitHub and at least one LLM provider (OpenAI, Anthropic, and/or Gemini)
 
 ## Development
 

@@ -53,8 +53,10 @@ jspm_packages/
 final-workspace/
 results/
 
-# Claude Code
-.claude/
+# Claude Code — keep shared skills under version control, ignore local settings
+.claude/*
+!.claude/skills/
+.claude/settings.local.json
 
 # Docker
 .docker/

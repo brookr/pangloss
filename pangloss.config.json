@@ -1,66 +1,124 @@
 {
-  "llm_presets": {
-    "codex-o3": {
-      "provider": "openai",
-      "model": "codex-cli",
-      "cli_model": "o3",
-      "temperature": 0.2,
-      "max_tokens": 4000,
-      "system_prompt": "Use OpenAI Codex CLI with o3 model for advanced reasoning and precise code generation."
+  "agent_presets": {
+    "gptoss": {
+      "id": "gptoss",
+      "tool": "codex",
+      "model": "gpt-oss:120b",
+      "label": "gpt-oss:120b (local, codex --oss)",
+      "oss": true,
+      "localProvider": "ollama",
+      "local": true,
+      "persona": "Pragmatic, test-first engineer. Favor the smallest correct change."
     },
-    "codex-gpt4": {
-      "provider": "openai",
-      "model": "codex-cli",
-      "cli_model": "gpt-4.1",
-      "temperature": 0.3,
-      "max_tokens": 4000,
-      "system_prompt": "Use OpenAI Codex CLI with GPT-4.1 for well-tested code that follows best practices."
+    "qwen-coder": {
+      "id": "qwen-coder",
+      "tool": "codex",
+      "model": "qwen2.5-coder:7b",
+      "label": "qwen2.5-coder:7b (local, codex --oss)",
+      "oss": true,
+      "localProvider": "ollama",
+      "local": true,
+      "persona": "Detail-oriented coder. Prioritize edge cases and input validation."
     },
     "claude-sonnet": {
-      "provider": "anthropic",
-      "model": "claude-code-cli",
-      "cli_model": "sonnet",
-      "temperature": 0.3,
-      "max_tokens": 4000,
-      "system_prompt": "Use Claude Code CLI with Sonnet for thoughtful code architecture and maintainable solutions."
-    },
-    "claude-opus": {
-      "provider": "anthropic",
-      "model": "claude-code-cli",
-      "cli_model": "opus",
-      "temperature": 0.2,
-      "max_tokens": 4000,
-      "system_prompt": "Use Claude Code CLI with Opus for complex reasoning and comprehensive code solutions."
-    },
-    "claude-haiku": {
-      "provider": "anthropic",
-      "model": "claude-code-cli",
-      "cli_model": "haiku",
-      "temperature": 0.1,
-      "max_tokens": 4000,
-      "system_prompt": "Use Claude Code CLI with Haiku for fast, efficient code generation."
-    },
-    "gemini-pro": {
-      "provider": "google",
-      "model": "gemini-cli",
-      "cli_model": "gemini-2.5-pro",
-      "temperature": 0.3,
-      "max_tokens": 4000,
-      "system_prompt": "Use Gemini CLI with 2.5 Pro for versatile code generation with large context."
+      "id": "claude-sonnet",
+      "tool": "claude",
+      "model": "sonnet",
+      "label": "Claude Sonnet",
+      "persona": "Thoughtful architect. Optimize for clarity and long-term maintainability."
     },
     "gemini-flash": {
-      "provider": "google",
-      "model": "gemini-cli",
-      "cli_model": "gemini-2.0-flash",
-      "temperature": 0.4,
-      "max_tokens": 4000,
-      "system_prompt": "Use Gemini CLI with 2.0 Flash for fast code generation with built-in tool use."
+      "id": "gemini-flash",
+      "tool": "gemini",
+      "model": "gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
+      "persona": "Fast, resourceful generalist. Cover the acceptance criteria efficiently."
+    },
+    "claude-opus": {
+      "id": "claude-opus",
+      "tool": "claude",
+      "model": "opus",
+      "label": "Claude Opus"
+    },
+    "codex-gpt5": {
+      "id": "codex-gpt5",
+      "tool": "codex",
+      "model": "gpt-5",
+      "label": "OpenAI GPT-5 (codex)"
+    },
+    "gemini-pro": {
+      "id": "gemini-pro",
+      "tool": "gemini",
+      "model": "gemini-2.5-pro",
+      "label": "Gemini 2.5 Pro"
+    },
+    "cursor-gpt5": {
+      "id": "cursor-gpt5",
+      "tool": "cursor",
+      "model": "gpt-5",
+      "label": "GPT-5 via Cursor"
+    },
+    "cursor-sonnet": {
+      "id": "cursor-sonnet",
+      "tool": "cursor",
+      "model": "sonnet-4.5",
+      "label": "Sonnet via Cursor"
+    },
+    "cursor-kimi": {
+      "id": "cursor-kimi",
+      "tool": "cursor",
+      "model": "kimi-k2.5",
+      "label": "Kimi K2.5 (open-weight via Cursor)",
+      "persona": "Resourceful open-weight engineer. Prove the plan with thorough tests."
+    },
+    "or-qwen-coder": {
+      "id": "or-qwen-coder",
+      "tool": "codex",
+      "model": "qwen/qwen3-coder",
+      "openrouter": true,
+      "label": "Qwen3 Coder (OpenRouter)",
+      "persona": "Detail-oriented coder. Prioritize edge cases and input validation."
+    },
+    "or-deepseek": {
+      "id": "or-deepseek",
+      "tool": "codex",
+      "model": "deepseek/deepseek-chat-v3.1",
+      "openrouter": true,
+      "label": "DeepSeek V3.1 (OpenRouter)"
+    },
+    "or-glm": {
+      "id": "or-glm",
+      "tool": "codex",
+      "model": "z-ai/glm-4.6",
+      "openrouter": true,
+      "label": "GLM 4.6 (OpenRouter)"
+    },
+    "or-kimi": {
+      "id": "or-kimi",
+      "tool": "codex",
+      "model": "moonshotai/kimi-k2-0905",
+      "openrouter": true,
+      "label": "Kimi K2 (OpenRouter)"
     }
   },
-  "default_agents": [
-    "codex-o3",
-    "claude-sonnet"
-  ],
-  "timeout_minutes": 15,
-  "max_parallel_agents": 5
+  "rosters": {
+    "open-weight-heavy": ["gptoss", "cursor-kimi", "claude-sonnet"],
+    "open-weight-pure": ["gptoss", "cursor-kimi", "qwen-coder"],
+    "openrouter": ["or-qwen-coder", "or-deepseek", "or-glm"],
+    "frontier": ["codex-gpt5", "claude-opus", "gemini-pro"],
+    "diverse": ["gptoss", "cursor-kimi", "gemini-pro"],
+    "all-local": ["gptoss", "qwen-coder", "claude-sonnet"]
+  },
+  "default_roster": "open-weight-heavy",
+  "synth_rotation": ["claude-sonnet", "gptoss", "cursor-kimi"],
+  "manifest": {
+    "setup": "yarn install --frozen-lockfile || yarn install",
+    "build": "yarn build",
+    "test": "yarn test",
+    "portBase": 4300,
+    "portOffset": 10
+  },
+  "max_parallel_agents": 3,
+  "total_timeout_minutes": 30,
+  "max_code_iterations": 4
 }

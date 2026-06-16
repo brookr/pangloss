@@ -1,0 +1,223 @@
+import { spawn } from 'child_process';
+import { AgentMode, AgentPreset } from '../types.js';
+
+export interface AdapterRunOpts {
+  mode: AgentMode;
+  /** The user/task content. Read-only modes should ask for a JSON block back. */
+  prompt: string;
+  /** Working directory: the main repo for plan/synthesize, the worktree for code/review. */
+  cwd: string;
+  /**
+   * System/contract text (worktree contract + persona). For Claude this is
+   * passed via --append-system-prompt; for tools without a system flag it is
+   * prepended to the prompt.
+   */
+  system?: string;
+  timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
+  /** Streamed stdout/stderr for live logging. */
+  onLog?: (chunk: string) => void;
+}
+
+export interface AdapterRunResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+  durationMs: number;
+}
+
+interface Invocation {
+  command: string;
+  args: string[];
+  /** When true the prompt is written to the child's stdin; otherwise it is already in args. */
+  promptOnStdin: boolean;
+}
+
+/**
+ * Wraps a single frontier-lab CLI behind one interface so the orchestrator can
+ * treat Claude, Codex (cloud + local --oss), Cursor, and Gemini identically.
+ * Each tool's verified non-interactive invocation, autonomy flags, and
+ * read-only vs. write posture live here and nowhere else.
+ */
+export class AgentAdapter {
+  constructor(public readonly preset: AgentPreset) {}
+
+  get id(): string {
+    return this.preset.id;
+  }
+
+  get label(): string {
+    return this.preset.label ?? this.preset.id;
+  }
+
+  /** Whether this mode is allowed to modify files. Only `code` writes. */
+  private writable(mode: AgentMode): boolean {
+    return mode === 'code';
+  }
+
+  /**
+   * Compose the prompt actually sent to the tool. Claude carries `system`
+   * out-of-band (a flag); every other tool gets it prepended so the contract
+   * still binds.
+   */
+  private composePrompt(opts: AdapterRunOpts): string {
+    if (this.preset.tool === 'claude' || !opts.system) return opts.prompt;
+    return `${opts.system}\n\n---\n\n${opts.prompt}`;
+  }
+
+  /** Build the exact command line for a run. Exposed for dry-run / doctor. */
+  buildInvocation(opts: AdapterRunOpts): Invocation {
+    const { preset } = this;
+    const writable = this.writable(opts.mode);
+    const promptText = this.composePrompt(opts);
+
+    switch (preset.tool) {
+      case 'claude': {
+        const args = ['-p', '--model', preset.model, '--output-format', 'json'];
+        if (opts.system) args.push('--append-system-prompt', opts.system);
+        args.push('--add-dir', opts.cwd);
+        if (writable) {
+          args.push('--permission-mode', 'bypassPermissions');
+        } else {
+          // Read-only posture: only pre-approve inspection tools.
+          args.push(
+            '--allowedTools',
+            'Read',
+            'Grep',
+            'Glob',
+            'Bash(git diff:*)',
+            'Bash(git log:*)',
+            'Bash(git show:*)',
+            'Bash(cat:*)',
+            'Bash(ls:*)'
+          );
+        }
+        return { command: 'claude', args, promptOnStdin: true };
+      }
+
+      case 'codex': {
+        const args = ['exec'];
+        if (preset.openrouter) {
+          // Point codex at OpenRouter's OpenAI-compatible endpoint via config
+          // overrides. Values are parsed as TOML, so strings must be quoted.
+          args.push(
+            '-c',
+            'model_provider="openrouter"',
+            '-c',
+            'model_providers.openrouter.name="OpenRouter"',
+            '-c',
+            'model_providers.openrouter.base_url="https://openrouter.ai/api/v1"',
+            '-c',
+            'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
+            '-c',
+            'model_providers.openrouter.wire_api="chat"'
+          );
+        }
+        args.push('-m', preset.model);
+        if (preset.oss) {
+          args.push('--oss', '--local-provider', preset.localProvider ?? 'ollama');
+        }
+        args.push('-s', writable ? 'workspace-write' : 'read-only');
+        args.push('--skip-git-repo-check');
+        // Prompt read from stdin via the `-` sentinel.
+        args.push('-');
+        return { command: 'codex', args, promptOnStdin: true };
+      }
+
+      case 'cursor': {
+        const args = ['-p', '--output-format', 'text', '--model', preset.model, '--workspace', opts.cwd, '--trust'];
+        if (writable) {
+          args.push('--force');
+        } else {
+          args.push('--mode', 'ask');
+        }
+        args.push(promptText);
+        return { command: 'cursor-agent', args, promptOnStdin: false };
+      }
+
+      case 'gemini': {
+        const args = ['-m', preset.model, '-o', 'text'];
+        args.push('--approval-mode', writable ? 'yolo' : 'plan');
+        args.push('-p', promptText);
+        return { command: 'gemini', args, promptOnStdin: false };
+      }
+
+      default: {
+        // Exhaustiveness guard.
+        const _never: never = preset.tool;
+        throw new Error(`Unsupported tool: ${String(_never)}`);
+      }
+    }
+  }
+
+  /** Human-readable preview of the command (secrets are never in argv here). */
+  previewCommand(opts: AdapterRunOpts): string {
+    const inv = this.buildInvocation(opts);
+    const shown = inv.promptOnStdin ? [...inv.args, '< <prompt-on-stdin>'] : inv.args;
+    return `${inv.command} ${shown.map((a) => (a.length > 60 ? a.slice(0, 57) + '…' : a)).join(' ')}`;
+  }
+
+  run(opts: AdapterRunOpts): Promise<AdapterRunResult> {
+    const inv = this.buildInvocation(opts);
+    const promptText = this.composePrompt(opts);
+    const start = Date.now();
+
+    return new Promise((resolve) => {
+      const child = spawn(inv.command, inv.args, {
+        cwd: opts.cwd,
+        env: { ...process.env, ...opts.env, CI: 'true', PANGLOSS_AGENT: this.id },
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, opts.timeoutMs);
+
+      child.stdout.on('data', (d: Buffer) => {
+        const s = d.toString();
+        stdout += s;
+        opts.onLog?.(s);
+      });
+      child.stderr.on('data', (d: Buffer) => {
+        const s = d.toString();
+        stderr += s;
+        opts.onLog?.(s);
+      });
+
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          ok: code === 0 && !timedOut,
+          stdout,
+          stderr,
+          code,
+          timedOut,
+          durationMs: Date.now() - start
+        });
+      };
+
+      child.on('error', (err) => {
+        stderr += `\n[spawn error] ${err instanceof Error ? err.message : String(err)}`;
+        finish(null);
+      });
+      child.on('close', (code) => finish(code));
+
+      if (inv.promptOnStdin && child.stdin) {
+        child.stdin.write(promptText);
+        child.stdin.end();
+      } else if (child.stdin) {
+        child.stdin.end();
+      }
+    });
+  }
+}

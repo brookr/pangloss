@@ -3,188 +3,177 @@
 import { config as loadDotenv } from 'dotenv';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { mkdir, writeFile, readFile } from 'fs/promises';
-import { join } from 'path';
-import { Pangloss } from './pangloss.js';
-import { loadConfig } from './config.js';
-import { Planner } from './planner.js';
-import { PanglossPlan } from './types.js';
+import { AgentAdapter } from './agents/adapter.js';
+import { generateDefaultConfig, loadConfig, resolveRoster } from './config.js';
+import { executeRun } from './orchestrator.js';
+import { run as runProc } from './util/proc.js';
 
-// Load environment variables from .env file
 loadDotenv();
-
-// Validate required environment variables
-function validateEnvironment() {
-  const required = ['GITHUB_TOKEN'];
-  const optional = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
-  
-  const missing = required.filter(key => !process.env[key]);
-  const availableProviders = optional.filter(key => process.env[key]);
-  
-  if (missing.length > 0) {
-    console.warn(chalk.yellow(`⚠️  Missing required environment variables: ${missing.join(', ')}`));
-    console.warn(chalk.yellow('💡 Create a .env file or set these variables manually'));
-  }
-  
-  if (availableProviders.length === 0) {
-    console.warn(chalk.yellow('⚠️  No LLM provider API keys found'));
-    console.warn(chalk.yellow('💡 Set at least one: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY'));
-  } else {
-    console.log(chalk.green(`✅ Found API keys for: ${availableProviders.map(k => k.replace('_API_KEY', '')).join(', ')}`));
-  }
-}
 
 const program = new Command();
 
 program
   .name('pangloss')
-  .description('Parallel LLM code generation - finding the best of all possible solutions')
-  .version('1.0.0');
+  .description('Parallel, multi-model code generation — the best of all possible worlds')
+  .version('2.0.0');
 
 program
-  .command('generate')
-  .description('Generate code using multiple LLM agents in parallel')
-  .option('-r, --repo <url>', 'GitHub repository URL')
-  .option('-f, --feature <name>', 'Feature name (optional, used if skipping planning)')
-  .option('-p, --prompt <text>', 'Code generation prompt (optional)')
-  .option('--plan-file <path>', 'Path to existing plan JSON')
-  .option('-a, --agents <list>', 'Comma-separated list of LLM agents', process.env.PANGLOSS_DEFAULT_AGENTS || 'codex-o3,claude-sonnet')
+  .command('run', { isDefault: true })
+  .description('Plan → code → review → select across a diverse roster of models')
+  .option('-r, --request <text>', 'The feature request (required in non-interactive mode)')
+  .option('--roster <name|csv>', 'Roster name or comma-separated agent ids')
   .option('-c, --config <path>', 'Path to config file', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
-  .option('--timeout <minutes>', 'Timeout per agent in minutes', process.env.PANGLOSS_TIMEOUT_MINUTES || '15')
-  .option('--merge-strategy <strategy>', 'Merge strategy (best_overall|best_per_file|composite)', process.env.PANGLOSS_MERGE_STRATEGY || 'best_overall')
-  .option('--keep-branches', 'Keep non-winning branches for inspection')
+  .option('-y, --yes', 'Auto-approve the synthesized plan (no approval gate)')
+  .option('--non-interactive', 'Never prompt; requires --request and implies --yes')
+  .option('--keep-worktrees', 'Keep all worktrees for inspection (default: keep winner only)')
+  .option('--timeout <minutes>', 'Wall-clock cap per agent invocation')
+  .option('--run-id <id>', 'Override the generated run id')
   .action(async (options) => {
-    try {
-      console.log(chalk.blue('🤖 Pangloss - Finding the best of all possible solutions...\n'));
-      
-      // Validate environment variables
-      validateEnvironment();
-      console.log(); // Empty line for spacing
-      
-      const config = await loadConfig(options.config);
-      const pangloss = new Pangloss(config);
-      const planner = new Planner(config);
-      
-      let plan: PanglossPlan;
-      let repoUrl = options.repo;
-      let baseBranch = 'HEAD'; // Default if not detected/provided
+    const nonInteractive: boolean = options.nonInteractive ?? false;
+    const interactive = Boolean(process.stdout.isTTY) && !nonInteractive;
 
-      // Load or create plan
-      if (options.planFile) {
-        const planContent = await readFile(options.planFile, 'utf-8');
-        plan = JSON.parse(planContent);
-        console.log(chalk.blue(`Loaded plan from ${options.planFile}`));
-        
-        if (!repoUrl) {
-            throw new Error('Repo URL is required when using a plan file (or must be detected via git)');
-        }
-      } else {
-        // Interactive planning
-        const planningResult = await planner.createPlan(process.cwd());
-        plan = planningResult.plan;
-        repoUrl = planningResult.repoUrl;
-        baseBranch = planningResult.baseBranch;
-      }
-      
-      const agents = options.agents.split(',').map((a: string) => a.trim());
-      
-      // Execute Run
-      const result = await pangloss.execute({
-        repo_url: repoUrl,
-        base_branch: baseBranch,
-        plan,
-        agents,
-        timeout_minutes: parseInt(options.timeout),
-        keep_branches: options.keepBranches
-      });
-      
-      // Save run metadata
-      try {
-          const runDir = join('.pangloss', 'runs', result.run_id);
-          await mkdir(runDir, { recursive: true });
-          
-          await writeFile(join(runDir, 'plan.json'), JSON.stringify(plan, null, 2));
-          await writeFile(join(runDir, 'plan.md'), generateMarkdownPlan(plan));
-          await writeFile(join(runDir, 'run.json'), JSON.stringify({
-              id: result.run_id,
-              timestamp: new Date().toISOString(),
-              repo_url: repoUrl,
-              base_branch: baseBranch,
-              agents,
-              config
-          }, null, 2));
-          
-          console.log(chalk.gray(`\nRun artifacts saved to .pangloss/runs/${result.run_id}/`));
-      } catch (e) {
-          console.warn('Failed to save run artifacts', e);
-      }
+    if (nonInteractive && !options.request) {
+      console.error(chalk.red('--non-interactive requires --request "…"'));
+      process.exit(1);
+    }
 
-      if (result.success) {
-        console.log(chalk.green(`\n✅ Run ${result.run_id} completed successfully!`));
-        // ...
-      } else {
-        console.error(chalk.red(`❌ Generation failed: ${result.error}`));
-        process.exit(1);
-      }
-    } catch (error) {
-      console.error(chalk.red(`💥 Error: ${error instanceof Error ? error.message : 'Unknown error'}`));
+    const result = await executeRun({
+      repoRoot: process.cwd(),
+      configPath: options.config,
+      roster: options.roster,
+      request: options.request,
+      interactive,
+      autoApprove: options.yes || nonInteractive,
+      keepWorktrees: Boolean(options.keepWorktrees),
+      timeoutMinutes: options.timeout ? parseInt(options.timeout, 10) : undefined,
+      runId: options.runId
+    });
+
+    if (result.success) {
+      console.log(chalk.green(`\n✅ Run ${result.runId} complete.`));
+    } else {
+      console.error(chalk.red(`\n❌ Run ${result.runId} failed: ${result.error ?? 'unknown error'}`));
       process.exit(1);
     }
   });
 
 program
-  .command('config')
-  .description('Generate default configuration file')
-  .option('-o, --output <path>', 'Output path for config file', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
+  .command('agents')
+  .description('List configured rosters and agent presets')
+  .option('-c, --config <path>', 'Path to config file', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
   .action(async (options) => {
-    const { generateDefaultConfig } = await import('./config.js');
+    const config = await loadConfig(options.config);
+    console.log(chalk.bold('\nRosters:'));
+    for (const [name, ids] of Object.entries(config.rosters)) {
+      const def = name === config.default_roster ? chalk.green(' (default)') : '';
+      console.log(`  ${chalk.cyan(name)}${def}: ${ids.join(', ')}`);
+    }
+    console.log(chalk.bold('\nAgent presets:'));
+    for (const p of Object.values(config.agent_presets)) {
+      const tag = p.local
+        ? chalk.yellow('[local]')
+        : p.openrouter
+          ? chalk.magenta('[openrouter]')
+          : chalk.gray('[cloud]');
+      console.log(`  ${chalk.cyan(p.id.padEnd(14))} ${tag.padEnd(22)} ${p.tool} · ${p.model}  ${chalk.gray(p.label ?? '')}`);
+    }
+    console.log(chalk.gray('\nTip: drop any OpenRouter model into a roster ad hoc, e.g.'));
+    console.log(chalk.gray('  pangloss run --roster "openrouter:qwen/qwen3-coder,openrouter:z-ai/glm-4.6,claude-sonnet"'));
+    console.log();
+  });
+
+program
+  .command('models')
+  .description('List OpenRouter model slugs you can use as openrouter:<slug>')
+  .option('-f, --filter <text>', 'Case-insensitive substring filter')
+  .action(async (options) => {
+    const headers: Record<string, string> = {};
+    if (process.env.OPENROUTER_API_KEY) headers.Authorization = `Bearer ${process.env.OPENROUTER_API_KEY}`;
+    try {
+      const resp = await fetch('https://openrouter.ai/api/v1/models', { headers });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const body = (await resp.json()) as { data?: Array<{ id: string; name?: string }> };
+      const filter = (options.filter ?? '').toLowerCase();
+      const rows = (body.data ?? [])
+        .filter((m) => !filter || m.id.toLowerCase().includes(filter) || (m.name ?? '').toLowerCase().includes(filter))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      console.log(chalk.bold(`\n${rows.length} OpenRouter models${filter ? ` matching "${options.filter}"` : ''}:\n`));
+      for (const m of rows) console.log(`  ${chalk.cyan(m.id.padEnd(40))} ${chalk.gray(m.name ?? '')}`);
+      console.log(chalk.gray(`\nUse one with:  pangloss run --roster "openrouter:<slug>,claude-sonnet,gptoss"`));
+    } catch (err) {
+      console.error(chalk.red(`Failed to fetch OpenRouter models: ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('doctor')
+  .description('Check that roster CLIs are installed and preview their invocations')
+  .option('-c, --config <path>', 'Path to config file', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
+  .option('--roster <name|csv>', 'Roster to check (default: configured default)')
+  .action(async (options) => {
+    const config = await loadConfig(options.config);
+    const presets = resolveRoster(config, options.roster);
+
+    console.log(chalk.bold('\nTool availability:'));
+    const tools = [...new Set(presets.map((p) => toolBinary(p.tool)))];
+    for (const bin of tools) {
+      const ok = (await runProc('which', [bin], {})).ok;
+      console.log(`  ${ok ? chalk.green('✓') : chalk.red('✗')} ${bin}`);
+    }
+
+    const needsOllama = presets.some((p) => p.oss);
+    if (needsOllama) {
+      const res = await runProc('curl', ['-sS', '-m', '3', 'http://localhost:11434/api/tags'], {});
+      console.log(`  ${res.ok ? chalk.green('✓') : chalk.red('✗')} ollama server (:11434) for --oss agents`);
+    }
+
+    if (presets.some((p) => p.openrouter)) {
+      const ok = Boolean(process.env.OPENROUTER_API_KEY);
+      console.log(`  ${ok ? chalk.green('✓') : chalk.red('✗')} OPENROUTER_API_KEY ${ok ? 'set' : 'missing (add it to .env)'} for openrouter agents`);
+    }
+
+    console.log(chalk.bold('\nResolved code-phase invocations:'));
+    for (const preset of presets) {
+      const adapter = new AgentAdapter(preset);
+      const preview = adapter.previewCommand({
+        mode: 'code',
+        prompt: '<plan>',
+        cwd: '<worktree>',
+        system: '<contract>',
+        timeoutMs: 0
+      });
+      console.log(`  ${chalk.cyan(preset.id.padEnd(14))} ${preview}`);
+    }
+    console.log();
+  });
+
+program
+  .command('config')
+  .description('Generate the default configuration file')
+  .option('-o, --output <path>', 'Output path', process.env.PANGLOSS_CONFIG_PATH || './pangloss.config.json')
+  .action(async (options) => {
     await generateDefaultConfig(options.output);
-    console.log(chalk.green(`✅ Default config generated at ${options.output}`));
+    console.log(chalk.green(`✅ Default config written to ${options.output}`));
   });
 
 program
   .command('setup')
-  .description('Generate .env file template with placeholder values')
-  .option('-o, --output <path>', 'Output path for .env file', './.env')
+  .description('Generate a .env template')
+  .option('-o, --output <path>', 'Output path', './.env')
   .action(async (options) => {
     const { copyFile } = await import('fs/promises');
     const { existsSync } = await import('fs');
-    
     if (existsSync(options.output)) {
-      console.log(chalk.yellow(`⚠️  ${options.output} already exists. Use --output to specify a different path.`));
+      console.log(chalk.yellow(`⚠️  ${options.output} already exists.`));
       return;
     }
-    
-    try {
-      await copyFile('.env.example', options.output);
-      console.log(chalk.green(`✅ Environment template created at ${options.output}`));
-      console.log(chalk.cyan('💡 Edit the file and add your API keys to get started'));
-    } catch (error) {
-      console.error(chalk.red(`❌ Failed to create .env file: ${error instanceof Error ? error.message : 'Unknown error'}`));
-    }
+    await copyFile('.env.example', options.output);
+    console.log(chalk.green(`✅ Wrote ${options.output} — edit it as needed (CLIs may already be authed).`));
   });
 
-function generateMarkdownPlan(plan: PanglossPlan): string {
-  return `# Implementation Plan
+program.parseAsync();
 
-## Summary
-${plan.summary}
-
-## Scope
-${plan.scope.map((s: string) => `- ${s}`).join('\n')}
-
-## Steps
-${plan.steps.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}
-
-## Acceptance Criteria
-${plan.acceptance_criteria.map((c: string) => `- [ ] ${c}`).join('\n')}
-
-## Original Request
-> ${plan.original_request}
-
-## Clarifications
-${plan.clarifications.map((qa: {question: string, answer: string}) => `**Q:** ${qa.question}\n**A:** ${qa.answer}`).join('\n\n')}
-`;
+function toolBinary(tool: string): string {
+  return tool === 'cursor' ? 'cursor-agent' : tool;
 }
-
-program.parse();
