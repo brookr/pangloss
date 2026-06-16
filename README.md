@@ -1,138 +1,122 @@
 # Pangloss
 
-> *"All is for the best in this best of all possible worlds"* - Voltaire
+> *"All is for the best in this best of all possible worlds"* — Voltaire
 
-Pangloss is a parallel LLM code generation system that orchestrates multiple AI agents to solve coding tasks. It runs agents in parallel, has them cross-evaluate each other's work ("Judging"), selects the best solution, and then refines it based on peer recommendations ("Finalization").
+Pangloss is a **multi-model fusion** code-generation system. It runs a diverse
+roster of AI coding agents — different models, *and* different agentic harnesses
+— in parallel, has them cross-review each other's work, and synthesizes the
+**best of all possible worlds** into one result. It's a bespoke take on
+[OpenRouter's Fusion](https://openrouter.ai/blog/announcements/fusion-beats-frontier/)
+idea: a loop of diverse, sonnet-level and open-weight models can rival — and in
+combination exceed — any single frontier model.
 
-## Features
+## How it works
 
-- **Interactive Planning**: Collaborates with you to define a detailed implementation plan and acceptance criteria before writing any code.
-- **Parallel Generation**: Runs multiple agents (Codex, Claude, etc.) simultaneously in isolated Docker containers to implement the plan.
-- **Cross-Agent Judging**: Each agent reviews and scores every other agent's solution against the plan and test results.
-- **Intelligent Selection**: Automatically picks the best solution based on weighted scores, test pass rates, and build status.
-- **Automated Finalization**: Applies consolidated feedback from the judging phase to polish the winning solution.
-- **Docker Isolation**: Full environment separation for every agent run.
-- **Playwright Support**: Native support for E2E testing with Playwright.
+Each run is a loop over four phases. Every agent works in its **own git
+worktree** (isolated checkout + branch); agents run on the host, so each tool
+uses its own existing auth.
 
-## Quick Start
+```
+feature request
+   │
+   ▼  PLAN        N models draft independently → a rotating synthesizer merges
+   │              them into one canonical plan (+ optional human approval gate)
+   ▼  CODE        each model implements the plan in its own worktree, runs the
+   │              project's build + tests, iterates to green, commits
+   ▼  REVIEW      every model reviews every implementation: score, novel ideas,
+   │              gaps, what's still needed
+   ▼  SELECT      weighted vote (self-reviews down-weighted) picks a winner and
+   │              produces a revision brief (must-fix + ideas to graft + gaps)
+   └──▶ if not converged: re-base every agent on the WINNING branch, turn the
+        brief into a revision plan, and loop. Stop on convergence or round cap.
+```
+
+The payoff is the **cross-pollination**: even when several agents pass, the
+review phase surfaces each one's unique good ideas, and the revision rounds graft
+them into the kept winner.
+
+## The roster — diversity is the product
+
+Agents are `<tool> + <model>` pairs. The same model through two different
+harnesses (e.g. Sonnet via claude-code vs. via codex→OpenRouter) genuinely
+produces different work.
+
+| Tool | How it's driven | Examples |
+|---|---|---|
+| **claude** | Claude Code CLI (`claude -p`) | `claude:sonnet`, `claude:opus` |
+| **codex** | OpenAI Codex CLI (`codex exec`) | `codex:gpt-5` |
+| **codex `--oss`** | local open-weight via Ollama | `oss:gpt-oss:120b` |
+| **cursor** | Cursor Agent CLI (`cursor-agent -p`) | `cursor:claude-4.5-sonnet`, `cursor:kimi-k2.5` |
+| **OpenRouter** | any OpenRouter model via codex's custom provider | `openrouter:qwen/qwen3-coder`, `openrouter:z-ai/glm-4.6` |
+| **gemini** | Gemini CLI (`gemini -p`) | `gemini:gemini-2.5-pro` *(needs `GOOGLE_CLOUD_PROJECT`)* |
+
+Drop any of these into a roster ad hoc (`--roster "openrouter:qwen/qwen3-coder,claude:sonnet,oss:gpt-oss:120b"`),
+or use a named roster from `pangloss.config.json` (`open-weight-heavy`,
+`frontier`, `sonnet-family`, `openrouter`, …).
+
+## Quick start
 
 ```bash
-# Install dependencies
-npm install
+yarn install
+yarn build
 
-# Build
-npm run build
+# See the roster catalog and named rosters
+node dist/cli.js agents
 
-# Set up environment variables
-npm run dev setup    # Creates .env file from template
-# Edit .env file and add your API keys (GITHUB_TOKEN + at least one LLM key)
+# Check that your roster's CLIs are installed/authed and preview invocations
+node dist/cli.js doctor --roster open-weight-heavy
 
-# Generate default configuration  
-npm run dev config
+# Run on the current repo (interactive: asks for the change + approves the plan)
+node dist/cli.js run
 
-# Start a new run (Interactive Mode)
-# run this from the root of the git repo you want to modify
-pangloss generate
+# Or fully unattended
+node dist/cli.js run --non-interactive --yes \
+  --roster "claude:sonnet,openrouter:qwen/qwen3-coder,oss:gpt-oss:120b" \
+  --request "Add a slugify() utility with unit tests"
 ```
+
+Artifacts for every run land under `.pangloss/runs/<run-id>/` (per-round
+`plan.json`, `code-outcomes.json`, `reviews.json`, `selection.json`,
+`summary.md`). The winning worktree is kept for inspection.
+
+## CLI
+
+| Command | Description |
+|---|---|
+| `pangloss run` | Plan → code → review → select (→ revise-loop). The default command. |
+| `pangloss agents` | List configured rosters and agent presets. |
+| `pangloss doctor [--roster …]` | Verify roster CLIs are installed/authed; preview invocations. |
+| `pangloss models [--filter …]` | List OpenRouter model slugs usable as `openrouter:<slug>`. |
+| `pangloss config` / `pangloss setup` | Generate `pangloss.config.json` / `.env`. |
+
+Key `run` flags: `--roster <name|csv>`, `--request <text>`, `--rounds <n>`,
+`--keep-worktrees`, `--timeout <min>`, `-y/--yes`, `--non-interactive`.
 
 ## Setup
 
-### Requirements
+**Requirements:** Node 20+, Git 2.5+, and the CLIs for whatever roster you use
+(`claude`, `codex`, `cursor-agent`, `gemini`, `ollama`). Each tool authenticates
+itself (OAuth/subscription or API key) — Pangloss runs them on the host, so no
+keys need to be injected anywhere.
 
-- Node.js 20+
-- Docker and Docker Compose
-- Git
+**OpenRouter** (optional, for the `openrouter:` lanes and the `openrouter`
+roster): set `OPENROUTER_API_KEY` in `.env`. Discover model slugs with
+`pangloss models`.
 
-### API Keys / Environment Variables
+**Local open-weight** (the `oss:` lanes / `gptoss`): run `ollama` with the model
+pulled (e.g. `ollama pull gpt-oss:120b`). Driven via `codex exec --oss`.
 
-Pangloss needs:
-
-- **GitHub**
-  - `GITHUB_TOKEN` (required) — used for cloning/pushing branches.
-
-- **LLM Provider Keys** (at least one)
-  - `OPENAI_API_KEY` — required for `codex-*` agents.
-  - `ANTHROPIC_API_KEY` — required for `claude-*` agents.
-  - `GEMINI_API_KEY` — required for `gemini-*` agents (Gemini API key from https://aistudio.google.com/apikey).
-
-Vertex AI (optional alternative for Gemini CLI):
-
-- `GOOGLE_API_KEY`
-- `GOOGLE_GENAI_USE_VERTEXAI=true`
-- `GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>`
-
-### Using the `gemini-pro` agent
-
-`gemini-pro` is available as an agent preset. To run it:
-
-```bash
-pangloss generate --agents "codex-o3,claude-sonnet,gemini-pro"
-```
-
-## Usage
-
-### Interactive Mode (Recommended)
-
-Simply run `pangloss generate` in your target repository. Pangloss will:
-1. Detect your repository context.
-2. Ask what change you want to make.
-3. Ask clarifying questions to refine requirements.
-4. Generate a detailed Plan for your approval.
-5. Kick off the parallel generation -> judging -> finalization pipeline.
-
-### Advanced Usage
-
-```bash
-# Skip planning by providing a pre-existing plan file
-pangloss generate --plan-file ./my-plan.json
-
-# Specify specific agents
-pangloss generate --agents "codex-o3,claude-sonnet"
-
-# Customize timeouts
-pangloss generate --timeout 30
-
-# Keep non-winning branches for inspection
-pangloss generate --keep-branches
-```
-
-## Architecture
-
-Pangloss executes a 4-phase pipeline for every run:
-
-1.  **GENERATE**: $N$ agents run in parallel containers. Each clones the repo, creates a unique branch, implements the plan, writes tests, and pushes changes.
-2.  **JUDGE**: $N$ agents run in parallel as judges. Each judge checks out every candidate branch, runs validation (build/test/e2e), and uses an LLM to score the solution and provide recommendations.
-3.  **FINALIZE**: The system aggregates scores to pick a winner. A finalizer agent runs on the winning branch to apply consolidated recommendations from the judges and ensure all tests pass.
-4.  **CLEANUP**: Non-winning branches are deleted from the remote (unless `--keep-branches` is used).
-
-## Configuration
-
-Pangloss uses `pangloss.config.json`. You can define custom LLM presets and default agents.
-
-```json
-{
-  "llm_presets": {
-    "codex-o3": { "provider": "openai", "model": "codex-cli", "cli_model": "o3", ... },
-    "claude-sonnet": { "provider": "anthropic", "model": "claude-code-cli", ... }
-  },
-  "default_agents": ["codex-o3", "claude-sonnet"],
-  "planner_agent": "claude-sonnet"
-}
-```
-
-## Requirements
-
-- Node.js 20+
-- Docker and Docker Compose
-- Git
-- API Keys for GitHub and at least one LLM provider (OpenAI, Anthropic, and/or Gemini)
+The agent behavior contract every model obeys inside its worktree lives in
+[`.claude/skills/pangloss-worktree/SKILL.md`](.claude/skills/pangloss-worktree/SKILL.md)
+and is injected into every agent's system prompt.
 
 ## Development
 
 ```bash
-npm install
-npm run build
-npm test
+yarn build       # tsc
+yarn test        # jest
+yarn lint        # eslint
+yarn typecheck   # tsc --noEmit
 ```
 
 ## License

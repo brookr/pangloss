@@ -1,233 +1,113 @@
 # Pangloss Project Context
 
-## Project Overview
+## What this is
 
-**Pangloss** is a parallel LLM code generation system that runs multiple AI CLI
-agents simultaneously to generate code, then intelligently merges the best
-solutions into a single optimal output. Named after Voltaire's character who
-believes "all is for the best in this best of all possible worlds."
+**Pangloss** is a multi-model **fusion** code-generation system. It runs a
+diverse roster of AI coding agents (different models *and* different agentic
+harnesses) in parallel, has them cross-review each other's work, and synthesizes
+the best result — a bespoke take on OpenRouter's "Fusion beats frontier" idea.
+The thesis under test: a loop of sonnet-level + open-weight models can rival
+frontier models, and combined frontier models dominate.
 
-## Current Project Status
+Named after Voltaire's Pangloss ("the best of all possible worlds").
 
-### ✅ **Completed Features**
+## Architecture (current — worktree-based, Docker retired)
 
-1. **Core Architecture**
-   - TypeScript CLI tool (`pangloss`) with Commander.js
-   - Docker Compose orchestration for parallel agent execution
-   - GitHub integration for branch management and PR creation
-   - Result merging with composite scoring algorithms
+Every run loops over four phases. Each agent works in its **own git worktree**
+(isolated checkout + branch under `.pangloss/runs/<run>/round-<n>/worktrees/`).
+Agents run **on the host** (not in containers), so each CLI uses its own existing
+auth — this is why there's no credential injection anywhere.
 
-2. **LLM CLI Integration**
-   - **OpenAI Codex CLI**: `codex --model o3 --approval-mode full-auto --quiet`
-   - **Claude Code CLI**: `claude --model sonnet -p "..." --output-format stream-json`
-   - **Gemini CLI**: `gemini --model gemini-2.5-pro --prompt "..."`
-   - All agents run in non-interactive mode for full automation
+1. **PLAN** ([src/phases/plan.ts](src/phases/plan.ts)) — N agents draft plans
+   independently; a *rotating* synthesizer (`synth_rotation`) merges them into
+   one canonical plan. Optional human approval gate (skipped with `--yes` /
+   `--non-interactive`).
+2. **CODE** ([src/phases/code.ts](src/phases/code.ts)) — each agent implements
+   the plan in its worktree, runs the manifest's build/test commands, iterates to
+   green (up to `max_code_iterations`), commits. node_modules is symlinked from
+   the main checkout for speed.
+3. **REVIEW** ([src/phases/review.ts](src/phases/review.ts)) — every agent
+   reviews every implementation read-only (N×N matrix): score, novel ideas, gaps,
+   still-needed. The worktree boundary is enforced as a read-only backstop.
+4. **SELECT** ([src/phases/select.ts](src/phases/select.ts)) — weighted vote
+   (self-reviews down-weighted 0.5), green-preferred; emits a **revision brief**
+   (must-fix + novel ideas to graft from the also-rans + still-needed).
 
-3. **Model Selection Support**
-   - OpenAI: `codex-o3`, `codex-gpt4` (o3, gpt-4.1)
-   - Anthropic: `claude-sonnet`, `claude-opus`, `claude-haiku`
-   - Google: `gemini-pro`, `gemini-flash` (2.5-pro, 2.0-flash)
+**Revise-loop** ([src/orchestrator.ts](src/orchestrator.ts)): if the winner
+isn't converged (green + meets-criteria + empty must-fix/still-needed), re-base
+every agent on the WINNING branch, turn the brief into a revision plan
+(`runRevisionPlan`), and run the round again. Stops on convergence or
+`max_rounds` (default 3).
 
-4. **Environment Management**
-   - Complete `.env` file support with dotenv
-   - Environment variable validation and helpful warnings
-   - `pangloss setup` command to generate .env template
+## Roster / adapter model
 
-5. **Docker Configuration**
-   - Alpine Linux base (lightweight, secure)
-   - All CLI tools pre-installed in containers
-   - Bash shell for maximum compatibility
-   - Non-root user for security
+The linchpin is [src/agents/adapter.ts](src/agents/adapter.ts) — a uniform
+`AgentAdapter` over every CLI, with the verified non-interactive invocations:
 
-### 🔄 **Current State**
+| tool | invocation notes |
+|---|---|
+| `claude` | `claude -p --output-format text` (NOT json — json wraps the answer in a result envelope); `--permission-mode bypassPermissions` for code |
+| `codex` | `codex exec -m … -s workspace-write/read-only --skip-git-repo-check`; prompt on stdin via `-` |
+| `codex --oss` | adds `--oss --local-provider ollama` for local open-weight (e.g. `gpt-oss:120b`) |
+| OpenRouter | codex with `-c model_provider=openrouter … wire_api="responses"` (codex dropped `"chat"`); needs `OPENROUTER_API_KEY`; reasoning capped to medium/low for frugality |
+| `cursor` | `cursor-agent -p … --trust` (+`--force` for code). **Never `--mode ask/plan`** — those hang headless (never terminate) |
+| `gemini` | `gemini -p -o text --approval-mode yolo/plan` |
 
-- **Project Status**: Ready for testing - all core features implemented
-- **Build Status**: TypeScript compiles successfully
-- **Dependencies**: All packages installed via yarn (node_modules/ in .gitignore)
-- **Git Status**: Repository should be initialized and ready for commits
+Presets + named rosters live in [src/config.ts](src/config.ts) /
+`pangloss.config.json`. Ad-hoc `<tool>:<model>` specs (`openrouter:…`, `cursor:…`,
+`claude:…`, `oss:…`, `gemini:…`, `codex:…`) are resolved by `parseDynamicPreset`,
+so any model can be dropped into `--roster` without editing config.
 
-## Architecture Details
+The shared agent behavior contract is
+[.claude/skills/pangloss-worktree/SKILL.md](.claude/skills/pangloss-worktree/SKILL.md),
+mirrored in compiled form at [src/agents/contract.ts](src/agents/contract.ts) and
+injected into every agent's system prompt.
 
-### **File Structure**
+## File structure
 
-```text
-pangloss/
-├── src/
-│   ├── cli.ts              # Main CLI with dotenv support
-│   ├── types.ts            # TypeScript interfaces
-│   ├── config.ts           # Configuration management
-│   ├── pangloss.ts         # Main orchestrator class
-│   ├── docker-orchestrator.ts # Docker container management
-│   └── result-merger.ts    # Intelligence merging algorithms
-├── agent-runner-cli.js     # Node.js script that runs inside containers
-├── agent.Dockerfile        # Alpine Linux container with all CLI tools
-├── pangloss.config.json    # Default configuration
-├── .env.example           # Environment template
-├── package.json           # Dependencies and scripts
-└── README.md              # Comprehensive documentation
+```
+src/
+├── cli.ts              # run / agents / doctor / models / config / setup
+├── orchestrator.ts     # the round loop + artifact persistence
+├── context.ts          # RunContext assembled per run
+├── config.ts           # presets, rosters, parseDynamicPreset, manifest defaults
+├── types.ts            # all interfaces (live + legacy)
+├── worktree.ts         # git worktree lifecycle + boundary enforcement
+├── validate.ts         # run manifest build/test, parse results
+├── agents/
+│   ├── adapter.ts      # uniform CLI adapter (the linchpin)
+│   └── contract.ts     # worktree contract + system-prompt composer
+├── phases/{plan,code,review,select,prompts}.ts
+└── util/{proc,pool,extract}.ts
 ```
 
-### **Usage Flow**
+`result-aggregator.ts` is legacy (kept only for its passing unit test).
+
+## Dev commands
 
 ```bash
-# Setup
-pangloss setup              # Create .env file
-# Edit .env with API keys
-pangloss config             # Generate config file
-
-# Generate code
-pangloss generate \
-  --repo https://github.com/user/project \
-  --feature "add-authentication" \
-  --prompt "Add JWT auth with login/logout" \
-  --agents "codex-o3,claude-sonnet,gemini-pro"
+yarn build      # tsc
+yarn test       # jest (ignores .pangloss/ worktrees)
+yarn lint
+yarn typecheck
+node dist/cli.js doctor --roster <name>   # preflight a roster
 ```
 
-### **What Happens Under the Hood**
+## Status
 
-1. **Validation**: Check API keys and environment
-2. **Docker Spawn**: Create containers for each selected agent
-3. **Parallel Execution**: Each container:
-   - Clones repo to unique branch (`repo/feature/agent-name`)
-   - Runs CLI tool in non-interactive mode
-   - Validates with tests, build, Playwright E2E
-   - Commits and pushes changes
-4. **Result Collection**: Gather metrics and scores from each agent
-5. **Intelligent Merging**: Combine best solutions using configurable strategies
-6. **PR Creation**: Create final branch and GitHub pull request
+- ✅ Full pipeline + revise-loop working end-to-end (validated by dogfood runs).
+- ✅ Harnesses validated live: claude-code, cursor, codex→OpenRouter.
+  Local `codex --oss` (gpt-oss) wired (works in isolation; slow).
+- ⚠️ **gemini** needs `GOOGLE_CLOUD_PROJECT` set for this account, else it errors
+  (degrades gracefully — no hang).
+- ⚠️ Worktrees are cut from the **last commit**; commit before a run if you want
+  uncommitted work included.
+- Default target manifest dogfoods Pangloss on itself (`yarn install/build/test`).
+  Playwright/app/DB hooks exist in the manifest for web targets but aren't
+  exercised by the dogfood target.
 
-## Technical Implementation
+## Philosophy
 
-### **CLI Commands**
-
-- `pangloss generate` - Main code generation command
-- `pangloss config` - Generate configuration file
-- `pangloss setup` - Create .env template
-- `pangloss --help` - Show all options
-
-### **Environment Variables**
-
-```bash
-# Required
-GITHUB_TOKEN=your_token
-
-# LLM APIs (at least one required)
-OPENAI_API_KEY=your_key
-ANTHROPIC_API_KEY=your_key  
-GEMINI_API_KEY=your_key
-
-# Optional configuration  
-PANGLOSS_DEFAULT_AGENTS=codex-o3,claude-sonnet,gemini-pro
-PANGLOSS_TIMEOUT_MINUTES=30          # Updated default
-PANGLOSS_MAX_PARALLEL_AGENTS=6       # Updated default
-PANGLOSS_CONFIG_PATH=./pangloss.config.json
-PANGLOSS_MERGE_STRATEGY=best_overall
-```
-
-### **Merge Strategies**
-
-- `best_overall`: Take highest-scoring complete solution
-- `best_per_file`: Combine best version of each file (placeholder)
-- `composite`: Merge complementary features (placeholder)
-
-## Known Issues & Next Steps
-
-### 🛠️ **Ready for Implementation**
-
-1. **Test Full Workflow**: Need to commit code and test with real repository
-2. **Enhanced Merge Strategies**: Currently `best_per_file` and `composite`
-   fall back to `best_overall`
-3. **Error Handling**: Add better error recovery and retry logic
-4. **Logging**: Add structured logging for debugging
-
-### 🎯 **Immediate Next Actions**
-
-**When opening this project for the first time:**
-
-1. **Verify Setup**: Check if `yarn install` and `yarn run build` work
-2. **Test CLI**: Run `node dist/cli.js --help` to verify basic functionality
-3. **Environment Setup**: Test `node dist/cli.js setup` and `.env` generation
-4. **Live Testing**: Try the full workflow with a real repository
-5. **Docker Validation**: Ensure containers build and CLI tools work properly
-
-**Priority Issues to Investigate:**
-
-- Verify all CLI tools (Codex, Claude Code, Gemini) install correctly in Docker
-- Test non-interactive modes work as expected
-- Validate GitHub integration and branch/PR creation
-- Check if merge strategies produce reasonable results
-
-## Development Commands
-
-```bash
-# Setup (if node_modules missing)
-yarn install                    # Install dependencies
-
-# Development
-yarn run build                  # Build TypeScript
-yarn run dev <command>          # Run in development
-yarn typecheck                  # Type checking only
-
-# Testing CLI
-node dist/cli.js --help         # Test CLI functionality
-node dist/cli.js setup          # Generate .env template
-node dist/cli.js config         # Generate config file
-
-# Testing full workflow (once .env is configured)
-node dist/cli.js generate \
-  --repo https://github.com/user/test-repo \
-  --feature "test-feature" \
-  --prompt "Add a simple test feature"
-
-# Docker testing (when ready for integration testing)
-docker-compose up --build       # Test container builds
-```
-
-## Key Design Decisions
-
-1. **CLI Tools over APIs**: Use official CLI tools (Codex, Claude Code, Gemini)
-   for better integration
-2. **Alpine Linux**: Lightweight, secure base for containers
-3. **Bash compatibility**: Reliable shell for automation scripts
-4. **TypeScript**: Type safety and better developer experience
-5. **Docker isolation**: Complete environment separation for each agent
-6. **GitHub-centric**: Use GitHub as coordination layer for branches and results
-
-## Dependencies
-
-### **Required CLI Tools**
-
-- `@openai/codex` - OpenAI Codex CLI
-- `@anthropic-ai/claude-code` - Claude Code CLI  
-- `@google/gemini-cli` - Gemini CLI
-
-### **System Requirements**
-
-- Node.js 20+
-- Docker & Docker Compose
-- Git & GitHub CLI (`gh`)
-- API keys for desired LLM providers
-
-## Success Criteria
-
-The system is complete when:
-
-- ✅ CLI tool builds and runs
-- ✅ Environment setup works smoothly
-- ⏳ Docker containers build successfully
-- ⏳ All CLI tools work in non-interactive mode
-- ⏳ GitHub integration (branches, PRs) functions
-- ⏳ At least basic merge strategy works
-- ⏳ End-to-end workflow completes successfully
-
-## Project Philosophy
-
-Pangloss embodies the idea that by running multiple AI agents in parallel and
-intelligently combining their results, we can achieve better outcomes than any
-single agent alone. The system prioritizes automation, reliability, and ease of
-use while maintaining security through proper isolation.
-
----
-
-*This file should be updated as the project evolves. Next session should focus
-on committing code and testing the full workflow.*
+Run many diverse agents in parallel, let them critique each other, and fuse the
+best ideas — better outcomes than any single agent, with isolation (worktrees)
+keeping every agent's changes contained.
