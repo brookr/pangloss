@@ -96,10 +96,12 @@ node dist/cli.js doctor --roster <name>   # preflight a roster
 ## Status
 
 - ✅ Full pipeline + revise-loop working end-to-end (validated by dogfood runs).
-- ✅ Harnesses validated live: claude-code, cursor, codex→OpenRouter.
-  Local `codex --oss` (gpt-oss) wired (works in isolation; slow).
-- ⚠️ **gemini** needs `GOOGLE_CLOUD_PROJECT` set for this account, else it errors
-  (degrades gracefully — no hang).
+- ✅ All five harnesses validated live in runs: claude-code, cursor,
+  codex→OpenRouter, gemini (needs `GOOGLE_CLOUD_PROJECT` — set in `.env`), and
+  local `codex --oss` (gpt-oss:120b — functional but slow, ~19 min for a small
+  task; give it a long `--local-timeout`).
+- ⚠️ Free OpenRouter (`:free`) models are heavily rate-limited and unreliable for
+  real coding — prefer paid slugs for dependable lanes.
 - ⚠️ Worktrees are cut from the **last commit**; commit before a run if you want
   uncommitted work included.
 - Default target manifest dogfoods Pangloss on itself (`yarn install/build/test`).
