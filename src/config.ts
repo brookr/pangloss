@@ -77,8 +77,8 @@ const AGENT_PRESETS: Record<string, AgentPreset> = {
   'cursor-sonnet': {
     id: 'cursor-sonnet',
     tool: 'cursor',
-    model: 'sonnet-4.5',
-    label: 'Sonnet via Cursor'
+    model: 'claude-4.5-sonnet',
+    label: 'Sonnet 4.5 via Cursor'
   },
 
   // ---- Open-weight via Cursor (cloud-served, but an open-weight model) ----
@@ -138,6 +138,15 @@ const ROSTERS: Record<string, string[]> = {
   'open-weight-pure': ['gptoss', 'cursor-kimi', 'qwen-coder'],
   // Three open-weight models via OpenRouter (needs OPENROUTER_API_KEY) — no local GPU.
   openrouter: ['or-qwen-coder', 'or-deepseek', 'or-glm'],
+  // Intra-family diversity: the SAME Sonnet family across three different
+  // harnesses (claude-code, cursor-agent, codex→OpenRouter) + version/thinking
+  // spread. Mostly subscription credit; the OpenRouter lane is the only paid one.
+  'sonnet-family': [
+    'claude:sonnet',
+    'cursor:claude-4.6-sonnet-medium-thinking',
+    'cursor:claude-4.5-sonnet',
+    'openrouter:anthropic/claude-sonnet-4.6'
+  ],
   // All three frontier models, different vendors — strongest baseline.
   frontier: ['codex-gpt5', 'claude-opus', 'gemini-pro'],
   // Maximum vendor/tier spread.
@@ -221,13 +230,44 @@ function resolvePreset(config: PanglossConfig, id: string): AgentPreset {
 }
 
 /**
- * Synthesize a preset from an ad-hoc `openrouter:<slug>` / `or:<slug>` id so any
- * OpenRouter model can be dropped into a roster without editing config.
+ * Synthesize a preset from an ad-hoc `<tool>:<model>` id so any model on any
+ * tool can be dropped into a roster without editing config. Supported prefixes:
+ *   openrouter:/or:  -> codex via OpenRouter      cursor:  -> cursor-agent
+ *   claude:          -> claude CLI                gemini:  -> gemini CLI
+ *   codex:           -> codex (cloud)             oss:/codex-oss: -> codex --oss (local)
+ * e.g. `cursor:claude-4.5-sonnet`, `openrouter:anthropic/claude-sonnet-4.6`.
  */
 export function parseDynamicPreset(id: string): AgentPreset | null {
-  const match = id.match(/^(?:openrouter|or):(.+)$/i);
+  const match = id.match(/^([a-z0-9-]+):(.+)$/i);
   if (!match) return null;
-  const model = match[1].trim();
-  const safeId = 'or-' + model.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-|-$/g, '');
-  return { id: safeId, tool: 'codex', model, openrouter: true, label: `${model} (OpenRouter)` };
+  const prefix = match[1].toLowerCase();
+  const model = match[2].trim();
+  const slug = (p: string) => `${p}-` + model.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '');
+
+  switch (prefix) {
+    case 'openrouter':
+    case 'or':
+      return { id: slug('or'), tool: 'codex', model, openrouter: true, label: `${model} (OpenRouter)` };
+    case 'cursor':
+      return { id: slug('cursor'), tool: 'cursor', model, label: `${model} (Cursor)` };
+    case 'claude':
+      return { id: slug('claude'), tool: 'claude', model, label: `${model} (Claude)` };
+    case 'gemini':
+      return { id: slug('gemini'), tool: 'gemini', model, label: `${model} (Gemini)` };
+    case 'codex':
+      return { id: slug('codex'), tool: 'codex', model, label: `${model} (Codex)` };
+    case 'oss':
+    case 'codex-oss':
+      return {
+        id: slug('oss'),
+        tool: 'codex',
+        model,
+        oss: true,
+        localProvider: 'ollama',
+        local: true,
+        label: `${model} (local oss)`
+      };
+    default:
+      return null;
+  }
 }

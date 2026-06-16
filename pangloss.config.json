@@ -61,8 +61,8 @@
     "cursor-sonnet": {
       "id": "cursor-sonnet",
       "tool": "cursor",
-      "model": "sonnet-4.5",
-      "label": "Sonnet via Cursor"
+      "model": "claude-4.5-sonnet",
+      "label": "Sonnet 4.5 via Cursor"
     },
     "cursor-kimi": {
       "id": "cursor-kimi",
@@ -105,6 +105,12 @@
     "open-weight-heavy": ["gptoss", "cursor-kimi", "claude-sonnet"],
     "open-weight-pure": ["gptoss", "cursor-kimi", "qwen-coder"],
     "openrouter": ["or-qwen-coder", "or-deepseek", "or-glm"],
+    "sonnet-family": [
+      "claude:sonnet",
+      "cursor:claude-4.6-sonnet-medium-thinking",
+      "cursor:claude-4.5-sonnet",
+      "openrouter:anthropic/claude-sonnet-4.6"
+    ],
     "frontier": ["codex-gpt5", "claude-opus", "gemini-pro"],
     "diverse": ["gptoss", "cursor-kimi", "gemini-pro"],
     "all-local": ["gptoss", "qwen-coder", "claude-sonnet"]

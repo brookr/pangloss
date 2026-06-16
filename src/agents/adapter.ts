@@ -75,7 +75,9 @@ export class AgentAdapter {
 
     switch (preset.tool) {
       case 'claude': {
-        const args = ['-p', '--model', preset.model, '--output-format', 'json'];
+        // `--output-format text` prints the model's final answer directly. (json
+        // wraps it in a result envelope, which hides the JSON we ask agents for.)
+        const args = ['-p', '--model', preset.model, '--output-format', 'text'];
         if (opts.system) args.push('--append-system-prompt', opts.system);
         args.push('--add-dir', opts.cwd);
         if (writable) {
@@ -112,7 +114,11 @@ export class AgentAdapter {
             '-c',
             'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
             '-c',
-            'model_providers.openrouter.wire_api="chat"'
+            'model_providers.openrouter.wire_api="responses"',
+            // Frugality: cap reasoning effort (the user's global codex config may
+            // default to xhigh, which inflates token usage on paid OpenRouter).
+            '-c',
+            `model_reasoning_effort="${opts.mode === 'code' ? 'medium' : 'low'}"`
           );
         }
         args.push('-m', preset.model);
@@ -127,12 +133,12 @@ export class AgentAdapter {
       }
 
       case 'cursor': {
+        // NOTE: `--mode ask`/`--mode plan` keep cursor-agent open in a Q&A wait
+        // and never terminate under -p. Use plain -p (which prints once and
+        // exits); add --force only for write-capable code mode. Read-only intent
+        // is carried by the prompt + enforced by the worktree boundary check.
         const args = ['-p', '--output-format', 'text', '--model', preset.model, '--workspace', opts.cwd, '--trust'];
-        if (writable) {
-          args.push('--force');
-        } else {
-          args.push('--mode', 'ask');
-        }
+        if (writable) args.push('--force');
         args.push(promptText);
         return { command: 'cursor-agent', args, promptOnStdin: false };
       }

@@ -19,6 +19,13 @@ describe('parseDynamicPreset', () => {
   it('returns null for normal preset ids', () => {
     expect(parseDynamicPreset('claude-sonnet')).toBeNull();
   });
+
+  it('synthesizes presets for every supported tool prefix', () => {
+    expect(parseDynamicPreset('cursor:claude-4.5-sonnet')).toMatchObject({ tool: 'cursor', model: 'claude-4.5-sonnet' });
+    expect(parseDynamicPreset('claude:opus')).toMatchObject({ tool: 'claude', model: 'opus' });
+    expect(parseDynamicPreset('gemini:gemini-2.5-pro')).toMatchObject({ tool: 'gemini', model: 'gemini-2.5-pro' });
+    expect(parseDynamicPreset('oss:qwen2.5-coder:7b')).toMatchObject({ tool: 'codex', model: 'qwen2.5-coder:7b', oss: true });
+  });
 });
 
 describe('resolveRoster', () => {
@@ -43,5 +50,11 @@ describe('resolveRoster', () => {
 
   it('requires at least two agents', () => {
     expect(() => resolveRoster(config, 'claude-sonnet')).toThrow(/at least 2/);
+  });
+
+  it('resolves the sonnet-family roster across three harnesses', () => {
+    const presets = resolveRoster(config, 'sonnet-family');
+    expect(presets.map((p) => p.tool)).toEqual(['claude', 'cursor', 'cursor', 'codex']);
+    expect(presets[3].openrouter).toBe(true);
   });
 });
