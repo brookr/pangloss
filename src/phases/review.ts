@@ -24,6 +24,8 @@ interface CandidateCtx {
   outcome: CodeOutcome;
   worktree: Worktree;
   diff: string;
+  /** Anonymized label shown to reviewers in place of the agent id. */
+  label: string;
 }
 
 /**
@@ -49,13 +51,22 @@ export async function runReviewPhase(
     const wt = wtById.get(outcome.agentId);
     if (!wt) continue;
     const diff = (await ctx.worktrees.fullDiff(wt, ctx.baseRef)).slice(0, MAX_DIFF);
-    candidates.push({ outcome, worktree: wt, diff });
+    candidates.push({ outcome, worktree: wt, diff, label: '' });
   }
 
   if (candidates.length === 0) {
     ctx.logger.warn('No candidate produced reviewable changes.');
     return [];
   }
+
+  // Blind the reviewers: assign shuffled anonymous labels so no agent can favor
+  // (or recognize) its own work. The real agent id is still recorded in findings.
+  const pool = candidates.map((_, i) => `Candidate ${String.fromCharCode(65 + i)}`);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  candidates.forEach((c, i) => (c.label = pool[i]));
 
   // Full reviewer × candidate matrix.
   const jobs = ctx.adapters.flatMap((reviewer) =>
@@ -69,7 +80,7 @@ export async function runReviewPhase(
       mode: 'review',
       prompt: reviewPrompt({
         plan,
-        candidateId: candidate.outcome.agentId,
+        candidateLabel: candidate.label,
         summary: candidate.outcome.summary,
         build: candidate.outcome.build.passed ? 'pass' : 'fail',
         tests: `${candidate.outcome.tests.passed}/${candidate.outcome.tests.total} (failed ${candidate.outcome.tests.failed})`,

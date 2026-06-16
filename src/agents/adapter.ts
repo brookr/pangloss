@@ -100,6 +100,9 @@ export class AgentAdapter {
       }
 
       case 'codex': {
+        // NOTE: codex MCP servers add seconds to every `codex exec` (and hold
+        // stdio pipes open past SIGKILL). They can't be cleared via `-c` (codex
+        // merges the table), so MCP is disabled in ~/.codex/config.toml instead.
         const args = ['exec'];
         if (preset.openrouter) {
           // Point codex at OpenRouter's OpenAI-compatible endpoint via config
@@ -174,7 +177,10 @@ export class AgentAdapter {
       const child = spawn(inv.command, inv.args, {
         cwd: opts.cwd,
         env: { ...process.env, ...opts.env, CI: 'true', PANGLOSS_AGENT: this.id },
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        // Own process group so a timeout can kill the whole tree (codex spawns
+        // children that otherwise keep stdio pipes open past a plain kill).
+        detached: true
       });
 
       let stdout = '';
@@ -182,9 +188,21 @@ export class AgentAdapter {
       let timedOut = false;
       let settled = false;
 
+      const killTree = () => {
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* already gone */
+          }
+        }
+      };
+
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGKILL');
+        killTree();
       }, opts.timeoutMs);
 
       child.stdout.on('data', (d: Buffer) => {

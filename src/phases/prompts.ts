@@ -169,7 +169,7 @@ Begin now.`;
 
 export function reviewPrompt(args: {
   plan: PanglossPlan;
-  candidateId: string;
+  candidateLabel: string;
   summary: string;
   build: string;
   tests: string;
@@ -177,13 +177,14 @@ export function reviewPrompt(args: {
   diff: string;
 }): string {
   return `You are reviewing one candidate implementation of a shared plan,
-READ-ONLY. Be rigorous and fair — you will review every candidate (including any
-of your own) under the same rubric.
+READ-ONLY. The author is ANONYMIZED — you do not know which agent (or model)
+wrote this, and one of these candidates may be your own. Judge only the code
+against the rubric; do not speculate about authorship.
 
 PLAN & ACCEPTANCE CRITERIA:
 ${JSON.stringify(args.plan, null, 2)}
 
-CANDIDATE: ${args.candidateId}
+CANDIDATE: ${args.candidateLabel}
 SELF-REPORTED SUMMARY: ${args.summary || '(none)'}
 VALIDATION: build=${args.build}, tests=${args.tests}
 DIFF STAT: ${args.diffStat || '(none)'}
