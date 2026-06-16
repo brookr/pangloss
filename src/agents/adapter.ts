@@ -209,10 +209,16 @@ export class AgentAdapter {
         }
       };
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        killTree();
-      }, opts.timeoutMs ?? this.timeoutMs);
+      // A timeout of 0 (or less) means unlimited — for overnight runs with slow
+      // local models that need as much time as they want.
+      const effectiveTimeout = opts.timeoutMs ?? this.timeoutMs;
+      const timer =
+        effectiveTimeout > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              killTree();
+            }, effectiveTimeout)
+          : null;
 
       child.stdout.on('data', (d: Buffer) => {
         const s = d.toString();
@@ -228,7 +234,7 @@ export class AgentAdapter {
       const finish = (code: number | null) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         resolve({
           ok: code === 0 && !timedOut,
           stdout,

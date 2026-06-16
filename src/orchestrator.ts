@@ -22,6 +22,8 @@ export interface RunOptions {
   keepWorktrees: boolean;
   timeoutMinutes?: number;
   localTimeoutMinutes?: number;
+  /** Overnight mode: no timeouts anywhere — slow local models run as long as they need. */
+  noTimeout?: boolean;
   maxRounds?: number;
   runId?: string;
 }
@@ -41,10 +43,10 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
 
   // Per-agent timeouts: local (oss) models get a longer leash than cloud ones,
   // overridable per-preset (timeoutMinutes) or via --timeout / --local-timeout.
-  const cloudMin = options.timeoutMinutes ?? config.total_timeout_minutes;
-  const localMin = options.localTimeoutMinutes ?? config.local_timeout_minutes;
+  const cloudMin = options.noTimeout ? 0 : (options.timeoutMinutes ?? config.total_timeout_minutes);
+  const localMin = options.noTimeout ? 0 : (options.localTimeoutMinutes ?? config.local_timeout_minutes);
   const timeoutMinFor = (p: (typeof presets)[number]) =>
-    p.timeoutMinutes ?? (p.local || p.oss ? localMin : cloudMin);
+    options.noTimeout ? 0 : p.timeoutMinutes ?? (p.local || p.oss ? localMin : cloudMin);
   const adapters = presets.map((p) => new AgentAdapter(p, timeoutMinFor(p) * 60_000));
 
   const runId = options.runId ?? generateRunId();
@@ -59,7 +61,10 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       adapters.map((a) => chalk.bold(a.label)).join(chalk.gray(' · '))
   );
   logger.info(
-    chalk.gray('   timeouts: ' + adapters.map((a) => `${a.id} ${Math.round(a.timeoutMs / 60_000)}m`).join(' · '))
+    chalk.gray(
+      '   timeouts: ' +
+        adapters.map((a) => `${a.id} ${a.timeoutMs > 0 ? `${Math.round(a.timeoutMs / 60_000)}m` : '∞'}`).join(' · ')
+    )
   );
   await warnIfDirty(options.repoRoot, logger);
 

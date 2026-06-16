@@ -29,6 +29,7 @@ program
   .option('--rounds <n>', 'Max revise-loop rounds (stops earlier on convergence)')
   .option('--timeout <minutes>', 'Wall-clock cap per cloud agent invocation')
   .option('--local-timeout <minutes>', 'Wall-clock cap per local (oss) agent invocation (local models can be slow)')
+  .option('--overnight', 'Overnight mode: no timeouts at all — let slow local models run as long as they need')
   .option('--run-id <id>', 'Override the generated run id')
   .action(async (options) => {
     const nonInteractive: boolean = options.nonInteractive ?? false;
@@ -50,6 +51,7 @@ program
       maxRounds: options.rounds ? parseInt(options.rounds, 10) : undefined,
       timeoutMinutes: options.timeout ? parseInt(options.timeout, 10) : undefined,
       localTimeoutMinutes: options.localTimeout ? parseInt(options.localTimeout, 10) : undefined,
+      noTimeout: Boolean(options.overnight),
       runId: options.runId
     });
 
