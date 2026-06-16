@@ -4,12 +4,12 @@ import { join } from 'path';
 import { AgentAdapter } from './agents/adapter.js';
 import { loadConfig, resolveRoster } from './config.js';
 import { Logger, RunContext } from './context.js';
-import { runPlanPhase } from './phases/plan.js';
+import { runPlanPhase, runRevisionPlan } from './phases/plan.js';
 import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
 import { CodeOutcome, ReviewFinding, SelectionOutcome } from './types.js';
-import { WorktreeManager } from './worktree.js';
+import { Worktree, WorktreeManager } from './worktree.js';
 import { run } from './util/proc.js';
 
 export interface RunOptions {
@@ -21,6 +21,7 @@ export interface RunOptions {
   autoApprove: boolean;
   keepWorktrees: boolean;
   timeoutMinutes?: number;
+  maxRounds?: number;
   runId?: string;
 }
 
@@ -28,6 +29,7 @@ export interface RunResult {
   runId: string;
   success: boolean;
   selection: SelectionOutcome | null;
+  rounds: number;
   runDir: string;
   error?: string;
 }
@@ -65,56 +67,96 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     request: options.request,
     timeoutMs: (options.timeoutMinutes ?? config.total_timeout_minutes) * 60_000,
     maxCodeIterations: config.max_code_iterations,
-    round: 0
+    round: 0,
+    maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds)
   };
 
   try {
-    // Phase 1
-    const plan = await runPlanPhase(ctx);
+    // Round 0 begins with diverse drafts + synthesis; revision rounds re-plan from the brief.
+    let plan = await runPlanPhase(ctx);
+    let roundBase = baseRef;
+    let selection: SelectionOutcome | null = null;
+    let finalWorktrees: Worktree[] = [];
+    let roundsRun = 0;
 
-    // Phase 2
-    const { outcomes, worktrees } = await runCodePhase(ctx, plan);
-    await writeFile(join(runDir, 'code-outcomes.json'), JSON.stringify(outcomes, null, 2));
-    summarizeOutcomes(logger, outcomes);
+    for (let round = 0; round < ctx.maxRounds; round++) {
+      ctx.round = round;
+      const roundDir = join(runDir, `round-${round}`);
+      await mkdir(roundDir, { recursive: true });
+      await writeFile(join(roundDir, 'plan.json'), JSON.stringify(plan, null, 2));
 
-    // Phase 3
-    const findings = await runReviewPhase(ctx, plan, outcomes, worktrees);
-    await writeFile(join(runDir, 'reviews.json'), JSON.stringify(findings, null, 2));
+      const { outcomes, worktrees } = await runCodePhase(ctx, plan, roundBase, round > 0);
+      await writeFile(join(roundDir, 'code-outcomes.json'), JSON.stringify(outcomes, null, 2));
+      summarizeOutcomes(logger, outcomes);
 
-    // Phase 4
-    const selection = selectWinner(outcomes, findings);
-    await writeFile(join(runDir, 'selection.json'), JSON.stringify(selection, null, 2));
-    await writeFile(join(runDir, 'summary.md'), renderSummary(runId, outcomes, findings, selection));
+      const findings = await runReviewPhase(ctx, plan, outcomes, worktrees);
+      await writeFile(join(roundDir, 'reviews.json'), JSON.stringify(findings, null, 2));
 
-    if (!selection) {
-      logger.warn('No winner could be selected (no reviewable candidates).');
-      return { runId, success: false, selection: null, runDir, error: 'No reviewable candidates.' };
+      selection = selectWinner(outcomes, findings);
+      finalWorktrees = worktrees;
+      roundsRun = round + 1;
+      await writeFile(join(roundDir, 'selection.json'), JSON.stringify(selection, null, 2));
+      await writeFile(join(roundDir, 'summary.md'), renderSummary(runId, round, outcomes, findings, selection));
+
+      if (!selection) {
+        logger.warn('No winner could be selected (no reviewable candidates).');
+        return { runId, success: false, selection: null, rounds: roundsRun, runDir, error: 'No reviewable candidates.' };
+      }
+      announceWinner(logger, selection, round);
+
+      if (isConverged(selection, outcomes)) {
+        logger.info(chalk.green(`\n✓ Converged after round ${round}: winner meets criteria with no must-fix / still-needed items.`));
+        break;
+      }
+      if (round === ctx.maxRounds - 1) {
+        logger.info(chalk.gray(`\nRound cap (${ctx.maxRounds}) reached.`));
+        break;
+      }
+
+      // Prepare the next round: drop this round's worktrees (branches are kept;
+      // the next round re-bases every agent on the winning branch and revises it).
+      if (!options.keepWorktrees) {
+        for (const wt of worktrees) await ctx.worktrees.remove(wt, false);
+      }
+      roundBase = selection.winnerBranch;
+      ctx.round = round + 1;
+      logger.info(chalk.gray(`\nRevising the winner (${selection.winnerAgentId}) → round ${round + 1}…`));
+      plan = await runRevisionPlan(ctx, plan, selection);
     }
 
-    announceWinner(logger, selection);
-    await cleanup(ctx, worktrees, selection, options.keepWorktrees);
-
-    logger.info(chalk.gray(`\nArtifacts: ${join('.pangloss', 'runs', runId)}/`));
-    logger.info(chalk.gray(`Winner worktree kept at: ${selection.winnerWorktree}`));
-    return { runId, success: true, selection, runDir };
+    await writeFile(join(runDir, 'final-selection.json'), JSON.stringify({ rounds: roundsRun, selection }, null, 2));
+    if (selection) {
+      await finalCleanup(ctx, finalWorktrees, selection, options.keepWorktrees);
+      logger.info(chalk.gray(`\nArtifacts: ${join('.pangloss', 'runs', runId)}/  (${roundsRun} round(s))`));
+      logger.info(chalk.gray(`Winner worktree kept at: ${selection.winnerWorktree}`));
+    }
+    return { runId, success: Boolean(selection), selection, rounds: roundsRun, runDir };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.warn(chalk.red(`Run failed: ${error}`));
-    return { runId, success: false, selection: null, runDir, error };
+    return { runId, success: false, selection: null, rounds: 0, runDir, error };
   }
 }
 
-async function cleanup(
+/** A round has converged when the winner is green, voted to meet criteria, and the brief is empty. */
+function isConverged(selection: SelectionOutcome, outcomes: CodeOutcome[]): boolean {
+  const winner = outcomes.find((o) => o.agentId === selection.winnerAgentId);
+  const green = !!winner && winner.build.passed && winner.tests.failed === 0;
+  const meets = selection.scoreboard.find((s) => s.agentId === selection.winnerAgentId)?.meets ?? false;
+  const noOpenWork = selection.revisionBrief.mustFix.length === 0 && selection.revisionBrief.stillNeeded.length === 0;
+  return green && meets && noOpenWork;
+}
+
+async function finalCleanup(
   ctx: RunContext,
-  worktrees: { agentId: string; branch: string; path: string }[],
+  worktrees: Worktree[],
   selection: SelectionOutcome,
   keepWorktrees: boolean
 ): Promise<void> {
   if (keepWorktrees) return;
   for (const wt of worktrees) {
     if (wt.agentId === selection.winnerAgentId) continue;
-    // Remove the working directory but keep the branch for inspection / PRs.
-    await ctx.worktrees.remove(wt, false);
+    await ctx.worktrees.remove(wt, false); // keep the branch, drop the directory
   }
   ctx.logger.info(chalk.gray('Removed non-winner worktrees (branches kept).'));
 }
@@ -151,7 +193,7 @@ function createConsoleLogger(): Logger {
     info: (m) => console.log(m),
     warn: (m) => console.warn(m),
     phase: (t) => console.log(chalk.bold.magenta(`\n━━ ${t} ━━`)),
-    agent: (id, m) => console.log(`  ${chalk.cyan(id.padEnd(14))} ${m}`)
+    agent: (id, m) => console.log(`  ${chalk.cyan(id.padEnd(16))} ${m}`)
   };
 }
 
@@ -164,14 +206,14 @@ function summarizeOutcomes(logger: Logger, outcomes: CodeOutcome[]): void {
   }
 }
 
-function announceWinner(logger: Logger, s: SelectionOutcome): void {
-  logger.phase('Phase 4 — Select: best of all possible worlds');
+function announceWinner(logger: Logger, s: SelectionOutcome, round: number): void {
+  logger.phase(`Phase 4 — Select (round ${round}): best of all possible worlds`);
   console.log(chalk.bold('\n🏆 Winner: ') + chalk.green(s.winnerAgentId) + chalk.gray(`  (${s.winnerBranch})`));
   console.log('   ' + s.reason);
   console.log(chalk.bold('\n   Scoreboard:'));
   for (const row of s.scoreboard) {
     const mark = row.agentId === s.winnerAgentId ? chalk.green('►') : ' ';
-    console.log(`   ${mark} ${row.agentId.padEnd(14)} ${String(row.score).padStart(5)}/100 ${row.meets ? chalk.green('✓meets') : ''}`);
+    console.log(`   ${mark} ${row.agentId.padEnd(16)} ${String(row.score).padStart(5)}/100 ${row.meets ? chalk.green('✓meets') : ''}`);
   }
   if (s.revisionBrief.adoptFromOthers.length) {
     console.log(chalk.bold('\n   Ideas worth grafting from also-rans:'));
@@ -181,11 +223,12 @@ function announceWinner(logger: Logger, s: SelectionOutcome): void {
 
 function renderSummary(
   runId: string,
+  round: number,
   outcomes: CodeOutcome[],
   findings: ReviewFinding[],
   selection: SelectionOutcome | null
 ): string {
-  const lines: string[] = [`# Pangloss run ${runId}`, ''];
+  const lines: string[] = [`# Pangloss run ${runId} — round ${round}`, ''];
   lines.push('## Implementations', '');
   for (const o of outcomes) {
     lines.push(

@@ -101,6 +101,8 @@ export interface PanglossConfig {
   total_timeout_minutes: number;
   /** Max code/iterate loops an agent may take in the code phase. */
   max_code_iterations: number;
+  /** Max outer revise-loop rounds (round 0 = first pass). Loop stops earlier on convergence. */
+  max_rounds: number;
 }
 
 // ---------------------------------------------------------------------------

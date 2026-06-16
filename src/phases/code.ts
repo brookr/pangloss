@@ -21,14 +21,26 @@ export interface CodePhaseResult {
  * Phase 2: each agent implements the plan in its own worktree, validating as it
  * goes. Worktrees are created sequentially (git worktree metadata is not
  * concurrency-safe), then agents run in parallel up to the configured limit.
+ *
+ * `roundBase` is the git ref each worktree is cut from: the original commit in
+ * round 0, the previous round's winning branch in revision rounds (so every
+ * agent improves the kept winner). `revision` switches the prompt framing.
  */
-export async function runCodePhase(ctx: RunContext, plan: PanglossPlan): Promise<CodePhaseResult> {
-  ctx.logger.phase('Phase 2 — Code: parallel implementation in isolated worktrees');
+export async function runCodePhase(
+  ctx: RunContext,
+  plan: PanglossPlan,
+  roundBase: string,
+  revision: boolean
+): Promise<CodePhaseResult> {
+  const heading = revision
+    ? `Phase 2 — Code (round ${ctx.round}): revising the kept winner in parallel`
+    : 'Phase 2 — Code: parallel implementation in isolated worktrees';
+  ctx.logger.phase(heading);
 
   // 1. Create all worktrees up front (sequential — git index lock).
   const worktrees: Worktree[] = [];
   for (const adapter of ctx.adapters) {
-    const wt = await ctx.worktrees.create(adapter.id, ctx.baseRef);
+    const wt = await ctx.worktrees.create(adapter.id, roundBase, ctx.round);
     worktrees.push(wt);
     ctx.logger.agent(adapter.id, chalk.gray(`worktree ${wt.path} on ${wt.branch}`));
   }
@@ -38,7 +50,7 @@ export async function runCodePhase(ctx: RunContext, plan: PanglossPlan): Promise
     const wt = worktrees[idx];
     const portBase = (ctx.manifest.portBase ?? 4300) + idx * (ctx.manifest.portOffset ?? 10);
     try {
-      return await runOneAgent(ctx, adapter, wt, plan, portBase);
+      return await runOneAgent(ctx, adapter, wt, plan, portBase, revision);
     } catch (err) {
       ctx.logger.agent(adapter.id, chalk.red(`failed: ${msg(err)}`));
       return failedOutcome(adapter.id, wt, msg(err));
@@ -53,7 +65,8 @@ async function runOneAgent(
   adapter: AgentAdapter,
   wt: Worktree,
   plan: PanglossPlan,
-  portBase: number
+  portBase: number,
+  revision: boolean
 ): Promise<CodeOutcome> {
   const started = Date.now();
   await prepareDeps(ctx, wt, adapter.id);
@@ -75,7 +88,7 @@ async function runOneAgent(
     ctx.logger.agent(adapter.id, `code iteration ${iter}/${ctx.maxCodeIterations}…`);
     const res = await adapter.run({
       mode: 'code',
-      prompt: codePrompt(plan, ctx.manifest, feedbackTail),
+      prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision }),
       cwd: wt.path,
       system: composeSystem(adapter.preset, 'code'),
       timeoutMs: ctx.timeoutMs,

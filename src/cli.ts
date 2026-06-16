@@ -26,6 +26,7 @@ program
   .option('-y, --yes', 'Auto-approve the synthesized plan (no approval gate)')
   .option('--non-interactive', 'Never prompt; requires --request and implies --yes')
   .option('--keep-worktrees', 'Keep all worktrees for inspection (default: keep winner only)')
+  .option('--rounds <n>', 'Max revise-loop rounds (stops earlier on convergence)')
   .option('--timeout <minutes>', 'Wall-clock cap per agent invocation')
   .option('--run-id <id>', 'Override the generated run id')
   .action(async (options) => {
@@ -45,12 +46,13 @@ program
       interactive,
       autoApprove: options.yes || nonInteractive,
       keepWorktrees: Boolean(options.keepWorktrees),
+      maxRounds: options.rounds ? parseInt(options.rounds, 10) : undefined,
       timeoutMinutes: options.timeout ? parseInt(options.timeout, 10) : undefined,
       runId: options.runId
     });
 
     if (result.success) {
-      console.log(chalk.green(`\n✅ Run ${result.runId} complete.`));
+      console.log(chalk.green(`\n✅ Run ${result.runId} complete (${result.rounds} round(s)).`));
     } else {
       console.error(chalk.red(`\n❌ Run ${result.runId} failed: ${result.error ?? 'unknown error'}`));
       process.exit(1);

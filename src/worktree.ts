@@ -23,17 +23,17 @@ export interface AgentStatus {
  * ignored path), each on branch `pangloss/<runId>/<agentId>`.
  */
 export class WorktreeManager {
-  private readonly baseDir: string;
-
   constructor(
     private readonly repoRoot: string,
     private readonly runId: string
-  ) {
-    this.baseDir = join(repoRoot, '.pangloss', 'runs', runId, 'worktrees');
+  ) {}
+
+  branchFor(agentId: string, round = 0): string {
+    return `pangloss/${this.runId}/r${round}/${agentId}`;
   }
 
-  branchFor(agentId: string): string {
-    return `pangloss/${this.runId}/${agentId}`;
+  private baseDirFor(round: number): string {
+    return join(this.repoRoot, '.pangloss', 'runs', this.runId, `round-${round}`, 'worktrees');
   }
 
   private async git(args: string[], cwd: string = this.repoRoot) {
@@ -41,10 +41,11 @@ export class WorktreeManager {
   }
 
   /** Create an isolated worktree on a fresh branch off `baseRef`. */
-  async create(agentId: string, baseRef: string): Promise<Worktree> {
-    await mkdir(this.baseDir, { recursive: true });
-    const branch = this.branchFor(agentId);
-    const path = join(this.baseDir, agentId);
+  async create(agentId: string, baseRef: string, round = 0): Promise<Worktree> {
+    const baseDir = this.baseDirFor(round);
+    await mkdir(baseDir, { recursive: true });
+    const branch = this.branchFor(agentId, round);
+    const path = join(baseDir, agentId);
 
     // Remove any stale worktree/branch from a previous aborted run with this id.
     await this.git(['worktree', 'remove', '--force', path]).catch(() => undefined);

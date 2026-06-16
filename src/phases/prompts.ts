@@ -97,11 +97,41 @@ Return ONLY a JSON object matching the same schema (no markdown, no prose):
 ${PLAN_SCHEMA}`;
 }
 
+export function revisionPlanPrompt(
+  plan: PanglossPlan,
+  brief: { mustFix: string[]; adoptFromOthers: string[]; stillNeeded: string[] },
+  round: number
+): string {
+  const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join('\n') : '- (none)');
+  return `You are producing a focused REVISION PLAN for round ${round}. A winning
+implementation was selected last round and now sits in every agent's worktree.
+Cross-model review produced the brief below. Synthesize the specific changes to
+make to that winning implementation — fix the must-fix items, graft in the
+strongest novel ideas from the other candidates, and cover anything still
+needed. Preserve what already works; do NOT redesign from scratch.
+
+ORIGINAL PLAN & ACCEPTANCE CRITERIA:
+${JSON.stringify(plan, null, 2)}
+
+REVISION BRIEF
+Must fix:
+${list(brief.mustFix)}
+Adopt from other candidates (novel ideas worth grafting in):
+${list(brief.adoptFromOthers)}
+Still needed:
+${list(brief.stillNeeded)}
+
+Return ONLY a JSON object matching this schema, where steps/scope describe the
+REVISIONS to apply (no markdown, no prose):
+${PLAN_SCHEMA}`;
+}
+
 export function codePrompt(
   plan: PanglossPlan,
   manifest: TargetManifest,
-  feedbackTail?: string
+  opts: { feedbackTail?: string; revision?: boolean } = {}
 ): string {
+  const { feedbackTail, revision } = opts;
   const cmds = [
     manifest.setup ? `- setup:  ${manifest.setup} (dependencies may already be installed)` : null,
     manifest.build ? `- build:  ${manifest.build}` : null,
@@ -115,8 +145,11 @@ export function codePrompt(
     ? `\nA previous attempt left failures. Fix them. Latest validation output (tail):\n\`\`\`\n${feedbackTail}\n\`\`\`\n`
     : '';
 
-  return `Implement the following plan in your current worktree. Follow the
-Worktree Contract in your system prompt exactly.
+  const intro = revision
+    ? `Your worktree ALREADY CONTAINS a working implementation — the winner chosen last round. IMPROVE it by applying the revision plan below; do NOT rewrite from scratch, and preserve what already passes.`
+    : `Implement the following plan in your current worktree.`;
+
+  return `${intro} Follow the Worktree Contract in your system prompt exactly.
 
 PLAN:
 ${JSON.stringify(plan, null, 2)}

@@ -32,6 +32,8 @@ export interface RunContext {
   /** Per-agent-invocation wall-clock cap. */
   timeoutMs: number;
   maxCodeIterations: number;
-  /** Round number for the outer revise-loop (slice 2); 0 for the first pass. */
+  /** Current round of the outer revise-loop; 0 for the first pass. */
   round: number;
+  /** Max revise-loop rounds before stopping (loop also stops on convergence). */
+  maxRounds: number;
 }

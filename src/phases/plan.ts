@@ -5,7 +5,7 @@ import { join } from 'path';
 import { AgentAdapter } from '../agents/adapter.js';
 import { composeSystem } from '../agents/contract.js';
 import { RunContext } from '../context.js';
-import { PanglossPlan, QA } from '../types.js';
+import { PanglossPlan, QA, SelectionOutcome } from '../types.js';
 import { extractJsonBlock } from '../util/extract.js';
 import { mapPool } from '../util/pool.js';
 import * as P from './prompts.js';
@@ -168,6 +168,35 @@ export function pickSynthesizer(ctx: RunContext): AgentAdapter {
     : ctx.adapters.map((a) => a.id);
   const id = rotation[ctx.round % rotation.length];
   return ctx.adapters.find((a) => a.id === id) ?? ctx.adapters[ctx.round % ctx.adapters.length];
+}
+
+/**
+ * Revision-round planning: the rotating synthesizer turns the prior round's
+ * selection brief (must-fix + ideas to graft from the also-rans + still-needed)
+ * into a focused revision plan applied on top of the kept winner.
+ */
+export async function runRevisionPlan(
+  ctx: RunContext,
+  prevPlan: PanglossPlan,
+  selection: SelectionOutcome
+): Promise<PanglossPlan> {
+  const synth = pickSynthesizer(ctx);
+  ctx.logger.phase(`Phase 1 — Revision plan (round ${ctx.round}) via ${synth.label}`);
+
+  const res = await synth.run({
+    mode: 'synthesize',
+    prompt: P.revisionPlanPrompt(prevPlan, selection.revisionBrief, ctx.round),
+    cwd: ctx.repoRoot,
+    system: composeSystem(synth.preset, 'synthesize'),
+    timeoutMs: ctx.timeoutMs
+  });
+
+  const raw = extractJsonBlock<RawPlan>(res.stdout);
+  if (!raw) {
+    ctx.logger.warn('Revision plan unparseable; reusing the previous plan.');
+    return { ...prevPlan, round: ctx.round };
+  }
+  return coercePlan(raw, prevPlan.original_request, prevPlan.clarifications, synth.id, ctx.round);
 }
 
 function coercePlan(
