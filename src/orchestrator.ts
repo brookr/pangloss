@@ -21,6 +21,7 @@ export interface RunOptions {
   autoApprove: boolean;
   keepWorktrees: boolean;
   timeoutMinutes?: number;
+  localTimeoutMinutes?: number;
   maxRounds?: number;
   runId?: string;
 }
@@ -37,7 +38,14 @@ export interface RunResult {
 export async function executeRun(options: RunOptions): Promise<RunResult> {
   const config = await loadConfig(options.configPath);
   const presets = resolveRoster(config, options.roster);
-  const adapters = presets.map((p) => new AgentAdapter(p));
+
+  // Per-agent timeouts: local (oss) models get a longer leash than cloud ones,
+  // overridable per-preset (timeoutMinutes) or via --timeout / --local-timeout.
+  const cloudMin = options.timeoutMinutes ?? config.total_timeout_minutes;
+  const localMin = options.localTimeoutMinutes ?? config.local_timeout_minutes;
+  const timeoutMinFor = (p: (typeof presets)[number]) =>
+    p.timeoutMinutes ?? (p.local || p.oss ? localMin : cloudMin);
+  const adapters = presets.map((p) => new AgentAdapter(p, timeoutMinFor(p) * 60_000));
 
   const runId = options.runId ?? generateRunId();
   const runDir = join(options.repoRoot, '.pangloss', 'runs', runId);
@@ -49,6 +57,9 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
   logger.info(
     chalk.blue(`\n🌍 Pangloss run ${chalk.bold(runId)} — roster: `) +
       adapters.map((a) => chalk.bold(a.label)).join(chalk.gray(' · '))
+  );
+  logger.info(
+    chalk.gray('   timeouts: ' + adapters.map((a) => `${a.id} ${Math.round(a.timeoutMs / 60_000)}m`).join(' · '))
   );
   await warnIfDirty(options.repoRoot, logger);
 
@@ -65,7 +76,8 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     interactive: options.interactive,
     autoApprove: options.autoApprove,
     request: options.request,
-    timeoutMs: (options.timeoutMinutes ?? config.total_timeout_minutes) * 60_000,
+    // ctx.timeoutMs is the validation (build/test) cap; model calls use each adapter's own timeout.
+    timeoutMs: cloudMin * 60_000,
     maxCodeIterations: config.max_code_iterations,
     round: 0,
     maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds)

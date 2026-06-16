@@ -47,6 +47,8 @@ export interface AgentPreset {
   local?: boolean;
   /** Optional persona appended to prompts to widen behavioral diversity. */
   persona?: string;
+  /** Per-agent wall-clock cap (minutes) for a single model invocation. Overrides the tier default. */
+  timeoutMinutes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +99,10 @@ export interface PanglossConfig {
   manifest: TargetManifest;
   /** Max agents to run concurrently on the host. */
   max_parallel_agents: number;
-  /** Wall-clock cap per agent invocation. */
+  /** Default wall-clock cap (minutes) per *cloud* agent invocation. */
   total_timeout_minutes: number;
+  /** Default wall-clock cap (minutes) for *local* (oss) agents — they can be much slower. */
+  local_timeout_minutes: number;
   /** Max code/iterate loops an agent may take in the code phase. */
   max_code_iterations: number;
   /** Max outer revise-loop rounds (round 0 = first pass). Loop stops earlier on convergence. */

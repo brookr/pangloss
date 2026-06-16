@@ -33,7 +33,7 @@ export async function runPlanPhase(ctx: RunContext): Promise<PanglossPlan> {
         prompt: P.planDraftPrompt(request, clarifications),
         cwd: ctx.repoRoot,
         system: composeSystem(adapter.preset, 'plan'),
-        timeoutMs: ctx.timeoutMs
+        timeoutMs: adapter.timeoutMs
       });
       const raw = extractJsonBlock<RawPlan>(res.stdout);
       if (!raw) {
@@ -85,7 +85,7 @@ async function collectClarifications(ctx: RunContext, request: string): Promise<
     prompt: P.clarifyPrompt(request),
     cwd: ctx.repoRoot,
     system: composeSystem(synth.preset, 'plan'),
-    timeoutMs: ctx.timeoutMs
+    timeoutMs: synth.timeoutMs
   });
   const questions = extractJsonBlock<string[]>(res.stdout);
   if (!Array.isArray(questions) || questions.length === 0) return [];
@@ -113,7 +113,7 @@ async function synthesize(
     prompt: P.synthesizePrompt(request, clarifications, drafts),
     cwd: ctx.repoRoot,
     system: composeSystem(synth.preset, 'synthesize'),
-    timeoutMs: ctx.timeoutMs
+    timeoutMs: synth.timeoutMs
   });
   const raw = extractJsonBlock<RawPlan>(res.stdout);
   if (!raw) {
@@ -188,7 +188,7 @@ export async function runRevisionPlan(
     prompt: P.revisionPlanPrompt(prevPlan, selection.revisionBrief, ctx.round),
     cwd: ctx.repoRoot,
     system: composeSystem(synth.preset, 'synthesize'),
-    timeoutMs: ctx.timeoutMs
+    timeoutMs: synth.timeoutMs
   });
 
   const raw = extractJsonBlock<RawPlan>(res.stdout);

@@ -91,7 +91,7 @@ async function runOneAgent(
       prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision }),
       cwd: wt.path,
       system: composeSystem(adapter.preset, 'code'),
-      timeoutMs: ctx.timeoutMs,
+      timeoutMs: adapter.timeoutMs,
       env
     });
     if (res.timedOut) ctx.logger.agent(adapter.id, chalk.yellow(`timed out after ${Math.round(res.durationMs / 1000)}s`));

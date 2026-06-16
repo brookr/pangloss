@@ -172,6 +172,7 @@ export function getDefaultConfig(): PanglossConfig {
     },
     max_parallel_agents: 3,
     total_timeout_minutes: 30,
+    local_timeout_minutes: 60,
     max_code_iterations: 4,
     max_rounds: 3
   };

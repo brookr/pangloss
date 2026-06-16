@@ -13,7 +13,8 @@ export interface AdapterRunOpts {
    * prepended to the prompt.
    */
   system?: string;
-  timeoutMs: number;
+  /** Override the adapter's own per-agent timeout for this call. */
+  timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   /** Streamed stdout/stderr for live logging. */
   onLog?: (chunk: string) => void;
@@ -42,7 +43,15 @@ interface Invocation {
  * read-only vs. write posture live here and nowhere else.
  */
 export class AgentAdapter {
-  constructor(public readonly preset: AgentPreset) {}
+  /**
+   * @param timeoutMs per-agent wall-clock cap for a single model invocation.
+   *   Resolved by the orchestrator from the preset / tier defaults so that slow
+   *   local models get a longer leash than fast cloud ones.
+   */
+  constructor(
+    public readonly preset: AgentPreset,
+    public timeoutMs: number = 30 * 60_000
+  ) {}
 
   get id(): string {
     return this.preset.id;
@@ -203,7 +212,7 @@ export class AgentAdapter {
       const timer = setTimeout(() => {
         timedOut = true;
         killTree();
-      }, opts.timeoutMs);
+      }, opts.timeoutMs ?? this.timeoutMs);
 
       child.stdout.on('data', (d: Buffer) => {
         const s = d.toString();

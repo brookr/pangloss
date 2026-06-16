@@ -89,7 +89,7 @@ export async function runReviewPhase(
       }),
       cwd: wt.path,
       system: composeSystem(reviewer.preset, 'review'),
-      timeoutMs: ctx.timeoutMs
+      timeoutMs: reviewer.timeoutMs
     });
 
     const violated = await ctx.worktrees.enforceReadOnly(wt, startSha);

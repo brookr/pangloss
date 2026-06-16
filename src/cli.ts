@@ -27,7 +27,8 @@ program
   .option('--non-interactive', 'Never prompt; requires --request and implies --yes')
   .option('--keep-worktrees', 'Keep all worktrees for inspection (default: keep winner only)')
   .option('--rounds <n>', 'Max revise-loop rounds (stops earlier on convergence)')
-  .option('--timeout <minutes>', 'Wall-clock cap per agent invocation')
+  .option('--timeout <minutes>', 'Wall-clock cap per cloud agent invocation')
+  .option('--local-timeout <minutes>', 'Wall-clock cap per local (oss) agent invocation (local models can be slow)')
   .option('--run-id <id>', 'Override the generated run id')
   .action(async (options) => {
     const nonInteractive: boolean = options.nonInteractive ?? false;
@@ -48,6 +49,7 @@ program
       keepWorktrees: Boolean(options.keepWorktrees),
       maxRounds: options.rounds ? parseInt(options.rounds, 10) : undefined,
       timeoutMinutes: options.timeout ? parseInt(options.timeout, 10) : undefined,
+      localTimeoutMinutes: options.localTimeout ? parseInt(options.localTimeout, 10) : undefined,
       runId: options.runId
     });
 
