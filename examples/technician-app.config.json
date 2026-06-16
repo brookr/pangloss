@@ -1,0 +1,21 @@
+{
+  "default_roster": "diverse",
+  "max_rounds": 2,
+  "max_parallel_agents": 3,
+  "manifest": {
+    "setup": "pnpm install",
+    "build": "pnpm build",
+    "test": "pnpm test",
+    "compose": {
+      "file": "docker-compose.yml",
+      "dbService": "db",
+      "dbContainerPort": 5432,
+      "dbPortBase": 5440,
+      "urlEnv": "DATABASE_URL",
+      "urlTemplate": "postgres://test_user:test_password@localhost:{port}/test_db",
+      "dbSetup": "pnpm db:rebuild",
+      "readyTimeoutMs": 60000
+    },
+    "portBase": 4300
+  }
+}

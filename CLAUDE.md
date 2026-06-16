@@ -73,7 +73,8 @@ src/
 ├── config.ts           # presets, rosters, parseDynamicPreset, manifest defaults
 ├── types.ts            # all interfaces (live + legacy)
 ├── worktree.ts         # git worktree lifecycle + boundary enforcement
-├── validate.ts         # run manifest build/test, parse results
+├── runtime.ts          # per-agent runtime: ComposeRuntime (isolated DB) or NoneRuntime
+├── validate.ts         # run manifest build/test/e2e (with runtime env), parse results
 ├── agents/
 │   ├── adapter.ts      # uniform CLI adapter (the linchpin)
 │   └── contract.ts     # worktree contract + system-prompt composer

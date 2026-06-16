@@ -4,33 +4,48 @@ import { TargetManifest } from './types.js';
 export interface ValidationResult {
   build: { ran: boolean; passed: boolean; output: string };
   tests: { ran: boolean; passed: number; failed: number; total: number; output: string };
+  e2e: { ran: boolean; passed: boolean; output: string };
+}
+
+export interface ValidationOpts {
+  onLog?: (s: string) => void;
+  /** Extra env (e.g. DATABASE_URL from the per-agent runtime) merged over process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const TAIL = 6000;
 
-/** Run the manifest's build + test commands in `cwd` and parse the outcome. */
+/** Run the manifest's build + test (+ optional e2e) commands in `cwd` and parse the outcome. */
 export async function runValidation(
   manifest: TargetManifest,
   cwd: string,
   timeoutMs: number,
-  onLog?: (s: string) => void
+  opts: ValidationOpts = {}
 ): Promise<ValidationResult> {
+  const { onLog, env } = opts;
   const result: ValidationResult = {
     build: { ran: false, passed: true, output: '' },
-    tests: { ran: false, passed: 0, failed: 0, total: 0, output: '' }
+    tests: { ran: false, passed: 0, failed: 0, total: 0, output: '' },
+    e2e: { ran: false, passed: true, output: '' }
   };
 
   if (manifest.build) {
-    const r = await runShell(manifest.build, { cwd, timeoutMs, onLog });
+    const r = await runShell(manifest.build, { cwd, timeoutMs, onLog, env });
     const out = `${r.stdout}\n${r.stderr}`;
     result.build = { ran: true, passed: r.ok, output: out.slice(-TAIL) };
   }
 
   if (manifest.test) {
-    const r = await runShell(manifest.test, { cwd, timeoutMs, onLog });
+    const r = await runShell(manifest.test, { cwd, timeoutMs, onLog, env });
     const out = `${r.stdout}\n${r.stderr}`;
     const parsed = parseTestOutput(out, r.ok);
     result.tests = { ran: true, ...parsed, output: out.slice(-TAIL) };
+  }
+
+  if (manifest.e2e) {
+    const r = await runShell(manifest.e2e, { cwd, timeoutMs, onLog, env });
+    const out = `${r.stdout}\n${r.stderr}`;
+    result.e2e = { ran: true, passed: r.ok, output: out.slice(-TAIL) };
   }
 
   return result;

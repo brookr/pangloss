@@ -110,6 +110,52 @@ The agent behavior contract every model obeys inside its worktree lives in
 [`.claude/skills/pangloss-worktree/SKILL.md`](.claude/skills/pangloss-worktree/SKILL.md)
 and is injected into every agent's system prompt.
 
+## Web apps: a Docker-isolated DB per agent
+
+For targets that need a database (or other services), the **compose runtime**
+gives every agent its *own* stack so they run in parallel — no host-port
+collisions, and your source tree is never modified. Add a `compose` block to the
+manifest pointing at the app's existing `docker-compose.yml`:
+
+```jsonc
+"manifest": {
+  "setup": "pnpm install",
+  "build": "pnpm build",
+  "test":  "pnpm test",           // integration tests hit the DB
+  "e2e":   "pnpm test:e2e:ci",    // optional; Playwright self-starts the app
+  "compose": {
+    "file": "docker-compose.yml",
+    "dbService": "db",
+    "dbPortBase": 5440,           // agent i gets 5440 + i
+    "urlEnv": "DATABASE_URL",
+    "urlTemplate": "postgres://test_user:test_password@localhost:{port}/test_db",
+    "dbSetup": "pnpm db:rebuild"  // migrate + seed the fresh DB
+  }
+}
+```
+
+Per agent, Pangloss writes a **port-rewritten copy** of your compose (the source
+is untouched), brings it up under a unique project name —
+`docker compose -p pangloss-<run>-<agent>` — waits for the DB, runs `dbSetup`,
+injects `DATABASE_URL`, then builds/tests/e2e's against that isolated stack and
+tears it down (`down -v`). Agents still run on the **host** (so their CLI auth
+just works); only the *runtime/DB* is containerized.
+
+Run it from a clone you've dedicated to Pangloss (it makes its own worktrees +
+branches there; your other clones stay free for manual work):
+
+```bash
+cd ~/projects/msi/technician-app-gamma
+node /path/to/pangloss/dist/cli.js run \
+  --non-interactive --yes --overnight \
+  -c /path/to/pangloss/examples/technician-app.config.json \
+  --roster "claude:sonnet,oss:gpt-oss:120b,openrouter:qwen/qwen3-coder" \
+  --request "…your feature…"
+```
+
+`--overnight` is recommended here: heavy e2e + slow local models want no clock.
+See [`examples/technician-app.config.json`](examples/technician-app.config.json).
+
 ## Development
 
 ```bash

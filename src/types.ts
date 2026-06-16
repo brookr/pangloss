@@ -77,6 +77,32 @@ export interface TargetManifest {
   portBase?: number;
   /** Spacing between per-worktree port allocations. */
   portOffset?: number;
+  /**
+   * When set, each agent gets its OWN isolated Docker Compose stack (e.g. a
+   * per-agent Postgres) so N agents run in parallel without host-port collisions.
+   * Pangloss generates a port-rewritten copy of `file` and brings it up under a
+   * unique project name; your source compose is never modified.
+   */
+  compose?: ComposeConfig;
+}
+
+export interface ComposeConfig {
+  /** Path to the target's docker-compose.yml (absolute, or relative to the repo root). */
+  file: string;
+  /** Service whose published port gets remapped per agent (default: "db"). */
+  dbService?: string;
+  /** Container-side DB port to publish (default: 5432). */
+  dbContainerPort?: number;
+  /** Host port assigned to agent 0; agent i gets dbPortBase + i (default: 5440). */
+  dbPortBase?: number;
+  /** Env var the app reads for its DB connection (e.g. "DATABASE_URL"). */
+  urlEnv?: string;
+  /** Connection-string template; `{port}` is replaced with the agent's host port. */
+  urlTemplate?: string;
+  /** Command to migrate + seed the fresh DB (run with `urlEnv` set, in the worktree). */
+  dbSetup?: string;
+  /** How long to wait for the DB to accept connections before giving up (ms; default 60000). */
+  readyTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------

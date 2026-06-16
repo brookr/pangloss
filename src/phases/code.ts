@@ -8,6 +8,7 @@ import { RunContext } from '../context.js';
 import { CodeOutcome, PanglossPlan } from '../types.js';
 import { Worktree } from '../worktree.js';
 import { runValidation, ValidationResult } from '../validate.js';
+import { createRuntime } from '../runtime.js';
 import { runShell } from '../util/proc.js';
 import { mapPool } from '../util/pool.js';
 import { codePrompt } from './prompts.js';
@@ -50,7 +51,7 @@ export async function runCodePhase(
     const wt = worktrees[idx];
     const portBase = (ctx.manifest.portBase ?? 4300) + idx * (ctx.manifest.portOffset ?? 10);
     try {
-      return await runOneAgent(ctx, adapter, wt, plan, portBase, revision);
+      return await runOneAgent(ctx, adapter, wt, plan, portBase, idx, revision);
     } catch (err) {
       ctx.logger.agent(adapter.id, chalk.red(`failed: ${msg(err)}`));
       return failedOutcome(adapter.id, wt, msg(err));
@@ -66,78 +67,109 @@ async function runOneAgent(
   wt: Worktree,
   plan: PanglossPlan,
   portBase: number,
+  index: number,
   revision: boolean
 ): Promise<CodeOutcome> {
   const started = Date.now();
   await prepareDeps(ctx, wt, adapter.id);
 
-  const env: NodeJS.ProcessEnv = {
-    PANGLOSS_WORKTREE: wt.path,
-    PANGLOSS_BRANCH: wt.branch,
-    PANGLOSS_SETUP_CMD: ctx.manifest.setup ?? '',
-    PANGLOSS_BUILD_CMD: ctx.manifest.build ?? '',
-    PANGLOSS_TEST_CMD: ctx.manifest.test ?? '',
-    PANGLOSS_E2E_CMD: ctx.manifest.e2e ?? '',
-    PANGLOSS_PORT_BASE: String(portBase)
-  };
-
-  let validation: ValidationResult | null = null;
-  let feedbackTail: string | undefined;
-
-  for (let iter = 1; iter <= ctx.maxCodeIterations; iter++) {
-    ctx.logger.agent(adapter.id, `code iteration ${iter}/${ctx.maxCodeIterations}…`);
-    const res = await adapter.run({
-      mode: 'code',
-      prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision }),
-      cwd: wt.path,
-      system: composeSystem(adapter.preset, 'code'),
-      timeoutMs: adapter.timeoutMs,
-      env
-    });
-    if (res.timedOut) ctx.logger.agent(adapter.id, chalk.yellow(`timed out after ${Math.round(res.durationMs / 1000)}s`));
-
-    validation = await runValidation(ctx.manifest, wt.path, ctx.timeoutMs);
-    await ctx.worktrees.commitAll(wt, `pangloss(${adapter.id}): iteration ${iter}`);
-
-    const status = await ctx.worktrees.readStatus(wt);
-    const green = validation.build.passed && validation.tests.failed === 0;
-    ctx.logger.agent(
-      adapter.id,
-      `build=${validation.build.passed ? chalk.green('pass') : chalk.red('fail')} ` +
-        `tests=${validation.tests.passed}/${validation.tests.total} ` +
-        `done=${status?.done ?? false}`
-    );
-
-    if (green && (status?.done ?? true)) break;
-    if (green) break;
-
-    const changed = await ctx.worktrees.changedFiles(wt, ctx.baseRef);
-    if (changed.length === 0 && iter > 1) {
-      ctx.logger.agent(adapter.id, chalk.yellow('no changes this iteration — stopping'));
-      break;
-    }
-    feedbackTail = `${validation.build.output}\n${validation.tests.output}`.slice(-3000);
+  // Per-agent runtime: an isolated Docker stack (e.g. its own Postgres) for web
+  // apps, or a no-op for simple targets. Brought up before coding, torn down after.
+  const runtime = createRuntime({
+    manifest: ctx.manifest,
+    repoRoot: ctx.repoRoot,
+    worktreePath: wt.path,
+    runId: ctx.runId,
+    agentId: adapter.id,
+    index,
+    log: (m) => ctx.logger.agent(adapter.id, chalk.gray(m))
+  });
+  try {
+    await runtime.up();
+  } catch (err) {
+    ctx.logger.agent(adapter.id, chalk.red(`runtime failed: ${msg(err)}`));
+    await runtime.down();
+    return failedOutcome(adapter.id, wt, `runtime: ${msg(err)}`);
   }
 
-  const status = await ctx.worktrees.readStatus(wt);
-  const changed = await ctx.worktrees.changedFiles(wt, ctx.baseRef);
-  const diffStat = await ctx.worktrees.diffStat(wt, ctx.baseRef);
-  const v = validation ?? { build: { passed: false }, tests: { passed: 0, failed: 0, total: 0 } };
+  try {
+    const env: NodeJS.ProcessEnv = {
+      PANGLOSS_WORKTREE: wt.path,
+      PANGLOSS_BRANCH: wt.branch,
+      PANGLOSS_SETUP_CMD: ctx.manifest.setup ?? '',
+      PANGLOSS_BUILD_CMD: ctx.manifest.build ?? '',
+      PANGLOSS_TEST_CMD: ctx.manifest.test ?? '',
+      PANGLOSS_E2E_CMD: ctx.manifest.e2e ?? '',
+      PANGLOSS_PORT_BASE: String(portBase),
+      ...runtime.env
+    };
 
-  return {
-    agentId: adapter.id,
-    branch: wt.branch,
-    worktreePath: wt.path,
-    done: status?.done ?? (v.build.passed && v.tests.failed === 0),
-    summary: status?.summary ?? '',
-    remainingWork: status?.remaining_work ?? [],
-    build: { passed: v.build.passed },
-    tests: { passed: v.tests.passed, failed: v.tests.failed, total: v.tests.total },
-    filesChanged: changed,
-    diffStat,
-    notesForReviewers: status?.notes_for_reviewers ?? [],
-    durationMs: Date.now() - started
-  };
+    let validation: ValidationResult | null = null;
+    let feedbackTail: string | undefined;
+
+    for (let iter = 1; iter <= ctx.maxCodeIterations; iter++) {
+      ctx.logger.agent(adapter.id, `code iteration ${iter}/${ctx.maxCodeIterations}…`);
+      const res = await adapter.run({
+        mode: 'code',
+        prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision }),
+        cwd: wt.path,
+        system: composeSystem(adapter.preset, 'code'),
+        timeoutMs: adapter.timeoutMs,
+        env
+      });
+      if (res.timedOut) ctx.logger.agent(adapter.id, chalk.yellow(`timed out after ${Math.round(res.durationMs / 1000)}s`));
+
+      validation = await runValidation(ctx.manifest, wt.path, ctx.timeoutMs, { env: runtime.env });
+      await ctx.worktrees.commitAll(wt, `pangloss(${adapter.id}): iteration ${iter}`);
+
+      const status = await ctx.worktrees.readStatus(wt);
+      const green = isGreen(validation);
+      ctx.logger.agent(
+        adapter.id,
+        `build=${validation.build.passed ? chalk.green('pass') : chalk.red('fail')} ` +
+          `tests=${validation.tests.passed}/${validation.tests.total} ` +
+          (validation.e2e.ran ? `e2e=${validation.e2e.passed ? chalk.green('pass') : chalk.red('fail')} ` : '') +
+          `done=${status?.done ?? false}`
+      );
+
+      if (green && (status?.done ?? true)) break;
+      if (green) break;
+
+      const changed = await ctx.worktrees.changedFiles(wt, ctx.baseRef);
+      if (changed.length === 0 && iter > 1) {
+        ctx.logger.agent(adapter.id, chalk.yellow('no changes this iteration — stopping'));
+        break;
+      }
+      feedbackTail = `${validation.build.output}\n${validation.tests.output}\n${validation.e2e.output}`.slice(-3000);
+    }
+
+    const status = await ctx.worktrees.readStatus(wt);
+    const changed = await ctx.worktrees.changedFiles(wt, ctx.baseRef);
+    const diffStat = await ctx.worktrees.diffStat(wt, ctx.baseRef);
+    const v = validation;
+
+    return {
+      agentId: adapter.id,
+      branch: wt.branch,
+      worktreePath: wt.path,
+      done: status?.done ?? (v ? isGreen(v) : false),
+      summary: status?.summary ?? '',
+      remainingWork: status?.remaining_work ?? [],
+      build: { passed: v?.build.passed ?? false },
+      tests: { passed: v?.tests.passed ?? 0, failed: v?.tests.failed ?? 0, total: v?.tests.total ?? 0 },
+      filesChanged: changed,
+      diffStat,
+      notesForReviewers: status?.notes_for_reviewers ?? [],
+      durationMs: Date.now() - started
+    };
+  } finally {
+    await runtime.down();
+  }
+}
+
+/** Green = build passed, no failing unit tests, and e2e (if it ran) passed. */
+function isGreen(v: ValidationResult): boolean {
+  return v.build.passed && v.tests.failed === 0 && (!v.e2e.ran || v.e2e.passed);
 }
 
 /**
