@@ -52,6 +52,7 @@ jspm_packages/
 .pangloss/
 final-workspace/
 results/
+bench/data/
 
 # Claude Code — keep shared skills under version control, ignore local settings
 .claude/*
