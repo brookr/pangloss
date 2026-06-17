@@ -133,6 +133,8 @@ export interface PanglossConfig {
   max_code_iterations: number;
   /** Max outer revise-loop rounds (round 0 = first pass). Loop stops earlier on convergence. */
   max_rounds: number;
+  /** Max retries per model call on transient/rate-limit (429) failures (exponential backoff). */
+  max_retries: number;
 }
 
 // ---------------------------------------------------------------------------

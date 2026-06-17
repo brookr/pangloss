@@ -89,7 +89,8 @@ export async function runReviewPhase(
       }),
       cwd: wt.path,
       system: composeSystem(reviewer.preset, 'review'),
-      timeoutMs: reviewer.timeoutMs
+      timeoutMs: reviewer.timeoutMs,
+      onRetry: (m) => ctx.logger.agent(reviewer.id, chalk.yellow(`(reviewing ${candidate.outcome.agentId}) ${m}`))
     });
 
     const violated = await ctx.worktrees.enforceReadOnly(wt, startSha);

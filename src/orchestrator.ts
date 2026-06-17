@@ -47,7 +47,7 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
   const localMin = options.noTimeout ? 0 : (options.localTimeoutMinutes ?? config.local_timeout_minutes);
   const timeoutMinFor = (p: (typeof presets)[number]) =>
     options.noTimeout ? 0 : p.timeoutMinutes ?? (p.local || p.oss ? localMin : cloudMin);
-  const adapters = presets.map((p) => new AgentAdapter(p, timeoutMinFor(p) * 60_000));
+  const adapters = presets.map((p) => new AgentAdapter(p, timeoutMinFor(p) * 60_000, config.max_retries));
 
   const runId = options.runId ?? generateRunId();
   const runDir = join(options.repoRoot, '.pangloss', 'runs', runId);

@@ -115,7 +115,8 @@ async function runOneAgent(
         cwd: wt.path,
         system: composeSystem(adapter.preset, 'code'),
         timeoutMs: adapter.timeoutMs,
-        env
+        env,
+        onRetry: (m) => ctx.logger.agent(adapter.id, chalk.yellow(m))
       });
       if (res.timedOut) ctx.logger.agent(adapter.id, chalk.yellow(`timed out after ${Math.round(res.durationMs / 1000)}s`));
 

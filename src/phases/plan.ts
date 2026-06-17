@@ -33,7 +33,8 @@ export async function runPlanPhase(ctx: RunContext): Promise<PanglossPlan> {
         prompt: P.planDraftPrompt(request, clarifications),
         cwd: ctx.repoRoot,
         system: composeSystem(adapter.preset, 'plan'),
-        timeoutMs: adapter.timeoutMs
+        timeoutMs: adapter.timeoutMs,
+        onRetry: (m) => ctx.logger.agent(adapter.id, chalk.yellow(m))
       });
       const raw = extractJsonBlock<RawPlan>(res.stdout);
       if (!raw) {

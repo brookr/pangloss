@@ -18,6 +18,8 @@ export interface AdapterRunOpts {
   env?: NodeJS.ProcessEnv;
   /** Streamed stdout/stderr for live logging. */
   onLog?: (chunk: string) => void;
+  /** Called once per retry with a short human message. */
+  onRetry?: (msg: string) => void;
 }
 
 export interface AdapterRunResult {
@@ -27,6 +29,8 @@ export interface AdapterRunResult {
   code: number | null;
   timedOut: boolean;
   durationMs: number;
+  /** How many attempts were made (1 = succeeded/failed first try). */
+  attempts?: number;
 }
 
 interface Invocation {
@@ -50,7 +54,11 @@ export class AgentAdapter {
    */
   constructor(
     public readonly preset: AgentPreset,
-    public timeoutMs: number = 30 * 60_000
+    public timeoutMs: number = 30 * 60_000,
+    /** Max retries on transient/rate-limit failures (free OpenRouter tiers 429 a lot). */
+    public maxRetries: number = 5,
+    /** Base for exponential backoff (ms); doubled each attempt, jittered, capped. */
+    public retryBaseMs: number = 2_000
   ) {}
 
   get id(): string {
@@ -112,7 +120,10 @@ export class AgentAdapter {
         // NOTE: codex MCP servers add seconds to every `codex exec` (and hold
         // stdio pipes open past SIGKILL). They can't be cleared via `-c` (codex
         // merges the table), so MCP is disabled in ~/.codex/config.toml instead.
-        const args = ['exec'];
+        // Bump codex's INTERNAL retries (these honor the provider's 429 /
+        // Retry-After headers, which we can't see from out here); our outer
+        // retry wrapper backs this up with exponential backoff.
+        const args = ['exec', '-c', 'request_max_retries=4', '-c', 'stream_max_retries=6'];
         if (preset.openrouter) {
           // Point codex at OpenRouter's OpenAI-compatible endpoint via config
           // overrides. Values are parsed as TOML, so strings must be quoted.
@@ -177,7 +188,7 @@ export class AgentAdapter {
     return `${inv.command} ${shown.map((a) => (a.length > 60 ? a.slice(0, 57) + '…' : a)).join(' ')}`;
   }
 
-  run(opts: AdapterRunOpts): Promise<AdapterRunResult> {
+  private runOnce(opts: AdapterRunOpts): Promise<AdapterRunResult> {
     const inv = this.buildInvocation(opts);
     const promptText = this.composePrompt(opts);
     const start = Date.now();
@@ -259,4 +270,60 @@ export class AgentAdapter {
       }
     });
   }
+
+  /**
+   * Run with retry. On a transient/rate-limit failure (very common on free
+   * OpenRouter tiers — HTTP 429 / "high demand" / stream resets), back off
+   * exponentially with jitter — honoring any "retry after N" hint in the
+   * output — and retry up to maxRetries. Rate-limit failures occur before any
+   * work is done, so retrying is safe. A wall-clock timeout is NOT retried.
+   */
+  async run(opts: AdapterRunOpts): Promise<AdapterRunResult> {
+    let last: AdapterRunResult = {
+      ok: false,
+      stdout: '',
+      stderr: '',
+      code: null,
+      timedOut: false,
+      durationMs: 0
+    };
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      last = await this.runOnce(opts);
+      if (last.ok || attempt >= this.maxRetries || !isTransientFailure(last)) {
+        return { ...last, attempts: attempt + 1 };
+      }
+      const delay = retryDelayMs(last, attempt + 1, this.retryBaseMs);
+      opts.onRetry?.(
+        `rate-limit/transient failure — retry ${attempt + 1}/${this.maxRetries} in ${Math.round(delay / 1000)}s`
+      );
+      await sleep(delay);
+    }
+    return { ...last, attempts: this.maxRetries + 1 };
+  }
+}
+
+const TRANSIENT_RE =
+  /\b429\b|\b50[0-9]\b|rate[- ]?limit|too many requests|quota|over\s?loaded|high demand|reconnecting|temporarily unavailable|service unavailable|server error|econnreset|etimedout|enotfound|fetch failed|socket hang\s?up|stream (?:disconnected|error|closed)|connection (?:reset|error)/i;
+
+/** A failure worth retrying: not ok, not a wall-clock timeout, and looks transient. */
+export function isTransientFailure(res: AdapterRunResult): boolean {
+  if (res.ok || res.timedOut) return false;
+  return TRANSIENT_RE.test(`${res.stderr}\n${res.stdout}`);
+}
+
+/** Honor a "retry after N" hint if present; otherwise exponential backoff + jitter. */
+export function retryDelayMs(res: AdapterRunResult, attempt: number, baseMs: number): number {
+  const text = `${res.stderr}\n${res.stdout}`;
+  const hint =
+    text.match(/retry[-\s]?after[:\s"]+(\d+(?:\.\d+)?)/i) ||
+    text.match(/try again in (\d+(?:\.\d+)?)\s*(?:s|sec|seconds)/i) ||
+    text.match(/in (\d+(?:\.\d+)?)\s*seconds/i);
+  if (hint) return Math.min(Math.ceil(parseFloat(hint[1]) * 1000) + 500, 120_000);
+  const expo = baseMs * 2 ** (attempt - 1);
+  const jitter = Math.random() * baseMs;
+  return Math.min(expo + jitter, 90_000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
