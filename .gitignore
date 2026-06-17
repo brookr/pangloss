@@ -65,3 +65,4 @@ bench/data/
 # Temporary files
 tmp/
 temp/
+bench/polyglot/
