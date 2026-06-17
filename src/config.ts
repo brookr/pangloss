@@ -243,8 +243,17 @@ export function parseDynamicPreset(id: string): AgentPreset | null {
   const match = id.match(/^([a-z0-9-]+):(.+)$/i);
   if (!match) return null;
   const prefix = match[1].toLowerCase();
-  const model = match[2].trim();
-  const slug = (p: string) => `${p}-` + model.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '');
+  let model = match[2].trim();
+  // An optional @suffix yields a DISTINCT preset id for the SAME model — used for
+  // homogeneous fusion / self-consistency (e.g. claude:sonnet@a, claude:sonnet@b).
+  let suffix = '';
+  const at = model.indexOf('@');
+  if (at >= 0) {
+    suffix = model.slice(at + 1).trim();
+    model = model.slice(0, at).trim();
+  }
+  const slug = (p: string) =>
+    `${p}-` + `${model}${suffix ? `-${suffix}` : ''}`.replace(/[^a-z0-9]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '');
 
   switch (prefix) {
     case 'openrouter':

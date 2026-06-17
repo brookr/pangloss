@@ -128,7 +128,7 @@ async function pipeline(roster, ex) {
     interactive: false,
     autoApprove: true,
     keepWorktrees: true,
-    maxRounds: 2,
+    maxRounds: 1,
     timeoutMinutes: 8,
     localTimeoutMinutes: 25
   });

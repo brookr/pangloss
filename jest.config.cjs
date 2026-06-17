@@ -2,7 +2,7 @@
 module.exports = {
   testEnvironment: 'node',
   // Never scan runtime artifacts (kept worktrees live under .pangloss/) or build output.
-  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/\\.pangloss/'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/\\.pangloss/', '/bench/'],
   extensionsToTreatAsEsm: ['.ts'],
   transform: {
     '^.+\\.ts$': [
