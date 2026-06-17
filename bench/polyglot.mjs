@@ -109,7 +109,12 @@ function setupRepo(ex) {
   copyFileSync(ex.testPath, join(dir, ex.testName));
   writeFileSync(join(dir, 'INSTRUCTIONS.md', ), ex.instructions);
   writeFileSync(join(dir, '.gitignore'), '.pangloss/\n');
-  const cfg = { ...getDefaultConfig(), max_retries: 10, manifest: { test: `python3 -m pytest -q ${ex.testName}` } };
+  // Explicitly null setup/build so the default yarn manifest doesn't leak into the python task.
+  const cfg = {
+    ...getDefaultConfig(),
+    max_retries: 10,
+    manifest: { setup: '', build: '', test: `python3 -m pytest -q ${ex.testName}` }
+  };
   writeFileSync(join(dir, 'pangloss.config.json'), JSON.stringify(cfg, null, 2));
   execSync('git init -q && git add -A && git -c user.email=b@b.co -c user.name=bench commit -q -m init', { cwd: dir });
   return dir;

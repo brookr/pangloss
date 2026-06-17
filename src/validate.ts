@@ -77,6 +77,16 @@ export function parseTestOutput(
     return { passed, failed, total: passed + failed };
   }
 
+  // pytest: "5 passed in 0.1s", "2 failed, 3 passed", "1 error"
+  const pyPass = output.match(/(\d+) passed/);
+  const pyFail = output.match(/(\d+) failed/);
+  const pyErr = output.match(/(\d+) error/);
+  if (pyPass || pyFail || pyErr) {
+    const passed = num(pyPass);
+    const failed = num(pyFail) + num(pyErr);
+    return { passed, failed, total: passed + failed };
+  }
+
   // Nothing parseable — infer from exit code so a green run isn't recorded as 0/0.
   return ok ? { passed: 1, failed: 0, total: 1 } : { passed: 0, failed: 1, total: 1 };
 }
