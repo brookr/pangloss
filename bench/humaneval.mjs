@@ -12,6 +12,7 @@
 //   node bench/humaneval.mjs --mode baseline --model claude:haiku --tasks 8 --runs 2
 //   node bench/humaneval.mjs --mode pipeline --model "claude:haiku,gemini:gemini-2.5-flash,openrouter:openai/gpt-oss-20b" --tasks 8
 
+import 'dotenv/config'; // load .env so gemini/OpenRouter lanes get their API keys
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { spawnSync, execSync } from 'child_process';
 import { tmpdir } from 'os';

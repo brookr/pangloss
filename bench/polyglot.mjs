@@ -14,6 +14,7 @@
 //   node bench/polyglot.mjs --mode baseline --model claude:sonnet --tasks 12 --concurrency 6
 //   node bench/polyglot.mjs --mode pipeline --model "claude:sonnet,gemini:gemini-2.5-flash,openrouter:qwen/qwen3-coder" --tasks 12 --concurrency 4
 
+import 'dotenv/config'; // load .env so gemini/OpenRouter lanes get their API keys (claude/cursor use OAuth)
 import { readdirSync, readFileSync, writeFileSync, copyFileSync, existsSync, mkdtempSync } from 'fs';
 import { spawnSync, execSync } from 'child_process';
 import { tmpdir } from 'os';
