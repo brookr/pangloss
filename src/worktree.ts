@@ -79,6 +79,12 @@ export class WorktreeManager {
     return res.ok && res.stdout.trim().length > 0;
   }
 
+  /** True if `refA` and `refB` point at identical trees (no diff between them). */
+  async treesIdentical(refA: string, refB: string): Promise<boolean> {
+    const res = await this.git(['diff', '--quiet', refA, refB]);
+    return res.ok; // `git diff --quiet` exits 0 only when there are no differences
+  }
+
   /** Stage everything and commit; returns true if a commit was made. */
   async commitAll(wt: Worktree, message: string): Promise<boolean> {
     await this.git(['add', '-A'], wt.path);

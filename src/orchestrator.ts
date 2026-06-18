@@ -125,6 +125,15 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
         logger.info(chalk.green(`\n✓ Converged after round ${round}: winner meets criteria with no must-fix / still-needed items.`));
         break;
       }
+      // No-progress guard: if a revise round's winner is identical to the branch
+      // it was revised from, further revision can't make headway — stop instead
+      // of burning another full round re-deriving the same code.
+      if (round > 0 && (await ctx.worktrees.treesIdentical(roundBase, selection.winnerBranch))) {
+        logger.info(
+          chalk.yellow(`\n↩ Revision round ${round} produced no changes vs the prior winner — stopping (revise loop is not making progress).`)
+        );
+        break;
+      }
       if (round === ctx.maxRounds - 1) {
         logger.info(chalk.gray(`\nRound cap (${ctx.maxRounds}) reached.`));
         break;
