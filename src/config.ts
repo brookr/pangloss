@@ -175,7 +175,8 @@ export function getDefaultConfig(): PanglossConfig {
     local_timeout_minutes: 60,
     max_code_iterations: 4,
     max_rounds: 3,
-    max_retries: 5
+    max_retries: 5,
+    review_patterns: true
   };
 }
 

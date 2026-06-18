@@ -149,6 +149,12 @@ export interface PanglossConfig {
   max_rounds: number;
   /** Max retries per model call on transient/rate-limit (429) failures (exponential backoff). */
   max_retries: number;
+  /**
+   * Learn this repo's review taste from its git history (cached under .pangloss/)
+   * and inject it into the review prompt. Default true; set false for throwaway
+   * targets (e.g. benchmarks on fresh clones) to skip the extra call.
+   */
+  review_patterns?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +272,15 @@ export interface ReviewFinding {
   /** What is still needed to fully satisfy the plan. */
   stillNeeded: string[];
   mustFix: string[];
+  /**
+   * The reviewer's read on any changes this candidate made to the acceptance
+   * tests (present only when the gate is on). The objective audit drives
+   * selection; this is the human-taste annotation that corroborates it.
+   */
+  acceptanceTests?: {
+    verdict: 'clean' | 'clarified' | 'weakened' | 'unsure';
+    note: string;
+  };
   /** 0..1 self-assessed confidence. */
   confidence: number;
 }

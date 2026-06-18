@@ -6,6 +6,7 @@ import { loadConfig, resolveRoster } from './config.js';
 import { Logger, RunContext } from './context.js';
 import { runPlanPhase, runRevisionPlan } from './phases/plan.js';
 import { runAcceptancePhase } from './phases/acceptance.js';
+import { learnReviewPatterns } from './phases/review-patterns.js';
 import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
@@ -87,7 +88,8 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     maxCodeIterations: config.max_code_iterations,
     round: 0,
     maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds),
-    acceptanceSuite: null
+    acceptanceSuite: null,
+    reviewPatterns: null
   };
 
   try {
@@ -104,6 +106,9 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       ctx.baseRef = acceptance.baseRef;
       roundBase = acceptance.baseRef;
     }
+
+    // Learn this team's review taste from git history once, for every round's review.
+    ctx.reviewPatterns = await learnReviewPatterns(ctx);
 
     let selection: SelectionOutcome | null = null;
     let finalWorktrees: Worktree[] = [];

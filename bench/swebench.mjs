@@ -129,7 +129,7 @@ async function generate(task) {
       });
       return capturePatch(work, baseRef);
     }
-    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, manifest: { setup: '', build: '', test: '' } };
+    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, review_patterns: false, manifest: { setup: '', build: '', test: '' } };
     const cfgPath = join(work, 'swe.config.json');
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     const result = await executeRun({

@@ -17,6 +17,7 @@ interface RawReview {
   gaps?: string[];
   still_needed?: string[];
   must_fix?: string[];
+  acceptance_tests?: { verdict?: string; note?: string };
   confidence?: number;
 }
 
@@ -85,7 +86,16 @@ export async function runReviewPhase(
         build: candidate.outcome.build.passed ? 'pass' : 'fail',
         tests: `${candidate.outcome.tests.passed}/${candidate.outcome.tests.total} (failed ${candidate.outcome.tests.failed})`,
         diffStat: candidate.outcome.diffStat ?? '',
-        diff: candidate.diff
+        diff: candidate.diff,
+        teamPatterns: ctx.reviewPatterns,
+        acceptance: candidate.outcome.acceptance
+          ? {
+              verdict: candidate.outcome.acceptance.verdict,
+              passedVsCanonical: candidate.outcome.acceptance.passedVsCanonical,
+              total: candidate.outcome.acceptance.total,
+              modified: candidate.outcome.acceptance.modified
+            }
+          : null
       }),
       cwd: wt.path,
       system: composeSystem(reviewer.preset, 'review'),
@@ -131,8 +141,16 @@ function coerceFinding(raw: RawReview, reviewer: string, candidate: CodeOutcome)
     gaps: arr(raw.gaps),
     stillNeeded: arr(raw.still_needed),
     mustFix: arr(raw.must_fix),
+    acceptanceTests: coerceAcceptanceNote(raw.acceptance_tests),
     confidence: clamp01(raw.confidence)
   };
+}
+
+function coerceAcceptanceNote(raw?: { verdict?: string; note?: string }): ReviewFinding['acceptanceTests'] {
+  if (!raw) return undefined;
+  const v = String(raw.verdict ?? '').toLowerCase();
+  const verdict = (['clean', 'clarified', 'weakened', 'unsure'].includes(v) ? v : 'unsure') as 'clean' | 'clarified' | 'weakened' | 'unsure';
+  return { verdict, note: String(raw.note ?? '').slice(0, 500) };
 }
 
 function clampScore(n: unknown): number {

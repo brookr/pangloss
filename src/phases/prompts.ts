@@ -219,6 +219,25 @@ Requirements:
 Begin now.`;
 }
 
+export function reviewPatternsPrompt(corpus: string): string {
+  return `You are profiling a software team's CODE-REVIEW TASTE from their git history.
+Below are commit messages from their review follow-ups and fixes — the things this
+team repeatedly catches and corrects. Distill the RECURRING, codebase-specific
+concerns into a concise checklist a reviewer should apply to NEW code in THIS repo.
+
+Rules:
+- 6–12 themed groups. Each: a short bold name + 1 line on what to look for.
+- Be specific to the evidence (e.g. tenancy/mode scoping, idempotency & replay-safety,
+  soft-delete handling, schema validation over casts, dead/stale-code hygiene, auth in
+  middleware, test coverage of new paths). Avoid generic advice not supported by the commits.
+- No preamble, no conclusion — just the checklist.
+
+COMMIT MESSAGES:
+${corpus}
+
+Return a compact markdown checklist.`;
+}
+
 export function reviewPrompt(args: {
   plan: PanglossPlan;
   candidateLabel: string;
@@ -227,7 +246,32 @@ export function reviewPrompt(args: {
   tests: string;
   diffStat: string;
   diff: string;
+  /** This team's review taste, learned from git history. */
+  teamPatterns?: string | null;
+  /** Acceptance-gate audit for this candidate (when the gate is on). */
+  acceptance?: { verdict: string; passedVsCanonical: number; total: number; modified: boolean } | null;
 }): string {
+  const patternsSection = args.teamPatterns
+    ? `\nTEAM REVIEW PATTERNS (learned from THIS repo's history — apply them; these are the things this team consistently catches):\n${args.teamPatterns}\n`
+    : '';
+
+  const acc = args.acceptance;
+  const acceptanceSection = acc
+    ? `\nACCEPTANCE GATE — the tests under the acceptance/ directory are the spec contract. This candidate ` +
+      `passes ${acc.passedVsCanonical}/${acc.total} of the ORIGINAL canonical suite; objective audit verdict: ${acc.verdict}` +
+      `${acc.modified ? '' : ' (tests unchanged)'}.\n` +
+      `If the diff modifies any acceptance/ test, judge it: did the change CLARIFY/strengthen the contract (fix a wrong ` +
+      `expectation, add a case) or WEAKEN it (remove/loosen assertions to pass a broken implementation)? Note exactly what ` +
+      `changed and why it is or isn't justified.\n`
+    : '';
+
+  const schema = acc
+    ? REVIEW_SCHEMA.replace(
+        '  "confidence": 0.0-1.0',
+        '  "acceptance_tests": { "verdict": "clean | clarified | weakened | unsure", "note": "what changed in the acceptance tests and whether it was justified" },\n  "confidence": 0.0-1.0'
+      )
+    : REVIEW_SCHEMA;
+
   return `You are reviewing one candidate implementation of a shared plan,
 READ-ONLY. The author is ANONYMIZED — you do not know which agent (or model)
 wrote this, and one of these candidates may be your own. Judge only the code
@@ -235,7 +279,7 @@ against the rubric; do not speculate about authorship.
 
 PLAN & ACCEPTANCE CRITERIA:
 ${JSON.stringify(args.plan, null, 2)}
-
+${patternsSection}${acceptanceSection}
 CANDIDATE: ${args.candidateLabel}
 SELF-REPORTED SUMMARY: ${args.summary || '(none)'}
 VALIDATION: build=${args.build}, tests=${args.tests}
@@ -247,9 +291,9 @@ ${args.diff}
 \`\`\`
 
 Assess: Does it satisfy the acceptance criteria? Is it correct, complete, and
-well-tested? What did it get uniquely right (novel ideas worth preserving)? What
-did it miss? What is still needed?
+well-tested? Apply the team review patterns above. What did it get uniquely right
+(novel ideas worth preserving)? What did it miss? What is still needed?
 
 Return ONLY a JSON object matching this schema (no markdown, no prose):
-${REVIEW_SCHEMA}`;
+${schema}`;
 }

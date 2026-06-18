@@ -41,4 +41,9 @@ export interface RunContext {
    * phase when the gate is enabled. Null when the gate is off.
    */
   acceptanceSuite: AcceptanceSuite | null;
+  /**
+   * This team's review taste, distilled from the repo's git history and injected
+   * into the review prompt. Null when disabled or no history is available.
+   */
+  reviewPatterns: string | null;
 }
