@@ -67,5 +67,9 @@ export async function establishConventions(ctx: RunContext): Promise<Conventions
 
 function stripFence(s: string): string {
   const m = s.match(/```(?:markdown|md)?\s*([\s\S]*?)```/i);
-  return (m ? m[1] : s).trim();
+  let out = (m ? m[1] : s).trim();
+  // Drop any model preamble before the first markdown heading.
+  const h = out.search(/^#\s/m);
+  if (h > 0) out = out.slice(h).trim();
+  return out;
 }

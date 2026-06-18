@@ -243,24 +243,31 @@ export function conventionsPrompt(docsText: string, corpusText: string): string 
     ? `\nOBSERVED PATTERNS (learned from this team's review/fix history — SUPPLEMENTARY; add only recurring conventions NOT already covered above, and mark each "(observed)"):\n${corpusText}\n`
     : '';
 
-  return `You are establishing the ENGINEERING CONVENTIONS for a software project — one
-guide every contributor and reviewer follows. Inspect the repository (read-only) to
-ground it in how this codebase is actually built.
+  return `Write the ENGINEERING CONVENTIONS guide for THIS codebase. It is read by AI
+coding agents (senior level) during planning, implementation, and review — not by
+humans. Inspect the repository (read-only) to ground every rule in reality.
 
 ${documented}${observed}
-Produce ONE concise conventions guide specific to THIS codebase, structured EXACTLY as:
+Optimize for LLM consumption:
+- Atomic & imperative: one rule per line, present-tense directive ("Scope every query by company"). No rationale unless it changes the behavior. No preamble, no filler, no walkthroughs.
+- Senior audience: omit anything a competent engineer already does by default; only codebase-specific or non-obvious rules earn a line.
+- Positive directives only: state what TO do. Do NOT include incorrect code, anti-patterns, or "bad vs good" contrasts; a prohibition is one terse clause, never a demonstration of the wrong way.
+- Minimal grounding: cite a real symbol/path/command only when a rule is otherwise ambiguous — a single token, never a snippet.
+- Mark a rule sourced only from history with a trailing "(observed)". Where documented and observed conflict, the DOCUMENTED rule wins.
 
-## Most important rules
-- up to 10 bullets — the conventions that must apply to EVERY change (highest signal first)
+Structure as a numbered hierarchy with STABLE dotted IDs so any rule is citable as "3.2.4". Put the highest-priority, always-applies rules in section 1. Format EXACTLY:
 
-## Conventions
-Grouped detail (only groups supported by the evidence — e.g. tenancy/scoping, validation,
-error handling, data & idempotency, testing & coverage, structure & naming, security/auth,
-accessibility). For each rule: what to do and briefly why. Mark anything sourced ONLY from
-history "(observed)". Where a documented rule and an observed one conflict, follow the
-DOCUMENTED rule.
+# Conventions
+1. Critical — always applies
+   1.1. <rule>
+   1.2. <rule>
+2. <Topic>
+   2.1. <rule>
+      2.1.1. <sub-rule>
+3. <Topic>
+   ...
 
-Be specific and actionable — no generic filler, no preamble. Return markdown only.`;
+Return only the guide, target under ~450 words.`;
 }
 
 export function reviewPrompt(args: {
@@ -277,7 +284,7 @@ export function reviewPrompt(args: {
   acceptance?: { verdict: string; passedVsCanonical: number; total: number; modified: boolean } | null;
 }): string {
   const patternsSection = args.conventions
-    ? `\nPROJECT CONVENTIONS (apply them — this is how THIS codebase is built; flag any violation):\n${args.conventions}\n`
+    ? `\nPROJECT CONVENTIONS (apply them — this is how THIS codebase is built). Flag any violation and CITE its convention number (e.g. "violates 3.2") in gaps/must_fix so it can be fixed precisely:\n${args.conventions}\n`
     : '';
 
   const acc = args.acceptance;

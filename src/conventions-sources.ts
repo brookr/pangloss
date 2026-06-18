@@ -78,12 +78,13 @@ export function formatConventionDocs(docs: ConventionDoc[]): string {
 
 /**
  * Split a generated guide into a condensed head (for the plan prompt) and the
- * full text (for code/review). The guide is authored with a "## Most important
- * rules" head followed by "## Conventions"; we split on that marker.
+ * full text (for code/review). The guide is a numbered hierarchy whose section 1
+ * holds the always-applies rules; the condensed head is everything before the
+ * top-level "2." section.
  */
 export function splitGuide(full: string): { full: string; condensed: string } {
-  const marker = /\n#{1,3}\s+conventions\b/i;
-  const m = full.match(marker);
-  const condensed = m && m.index ? full.slice(0, m.index).trim() : full.slice(0, 1600).trim();
-  return { full: full.trim(), condensed: condensed || full.slice(0, 1600).trim() };
+  const t = full.trim();
+  const m = t.match(/\n\s*2\.\s/);
+  const condensed = m && m.index ? t.slice(0, m.index).trim() : t.slice(0, 1200).trim();
+  return { full: t, condensed: condensed || t.slice(0, 1200).trim() };
 }

@@ -38,22 +38,21 @@ describe('discoverConventionDocs', () => {
 });
 
 describe('splitGuide', () => {
-  it('splits the condensed head from the full guide on the Conventions heading', () => {
-    const full = `## Most important rules
-- always scope by tenant
-- validate with zod
-
-## Conventions
-### Tenancy
-detail detail`;
+  it('takes section 1 as the condensed head, splitting before the top-level "2."', () => {
+    const full = `# Conventions
+1. Critical — always applies
+   1.1. Scope every query by company
+   1.2. Validate inputs with zod
+2. Data
+   2.1. Insert idempotently`;
     const { full: f, condensed } = splitGuide(full);
-    expect(condensed).toContain('always scope by tenant');
-    expect(condensed).not.toContain('### Tenancy');
-    expect(f).toContain('### Tenancy');
+    expect(condensed).toContain('1.1. Scope every query by company');
+    expect(condensed).not.toContain('2.1. Insert idempotently');
+    expect(f).toContain('2.1. Insert idempotently');
   });
 
-  it('falls back to a truncated head when there is no marker', () => {
-    const { condensed } = splitGuide('just a flat list of rules with no heading');
-    expect(condensed).toContain('just a flat list');
+  it('falls back to a truncated head when there is no "2." section', () => {
+    const { condensed } = splitGuide('# Conventions\n1. Only one section here');
+    expect(condensed).toContain('Only one section here');
   });
 });
