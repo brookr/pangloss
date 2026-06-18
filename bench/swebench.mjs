@@ -16,7 +16,7 @@
 //   node bench/swebench.mjs --mode diverse --model "claude:sonnet,claude:haiku,oss:gpt-oss:120b" --run-id div1
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, appendFileSync, mkdtempSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdtempSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -67,10 +67,17 @@ function setupWork(task) {
   const cache = repoClone(task.repo);
   const work = mkdtempSync(join(tmpdir(), 'swe-'));
   sh(`git clone --quiet "${cache}" "${work}"`);
-  sh(`git -C "${work}" checkout --quiet -B pangbase ${task.base_commit}`);
-  // Keep Pangloss control files out of the patch.
+  sh(`git -C "${work}" checkout --quiet ${task.base_commit}`);
+  // ANSWER-LEAK GUARD: the cache is a full mirror, so every FUTURE commit (the
+  // actual fix + its tests) is reachable via `git log --all` / `git show`. Drop
+  // the .git mirror entirely and re-init a single-commit snapshot AT base_commit
+  // so no future history is reachable. Agents must solve from the code, not the
+  // repo's future.
+  rmSync(join(work, '.git'), { recursive: true, force: true });
   appendFileSync(join(work, '.gitignore'), '\n.pangloss/\nswe.config.json\n');
-  sh(`git -C "${work}" add .gitignore && git -C "${work}" -c user.email=b@b.co -c user.name=bench commit -q -m base --no-verify`);
+  sh(`git -C "${work}" init -q`);
+  sh(`git -C "${work}" add -A`);
+  sh(`git -C "${work}" -c user.email=b@b.co -c user.name=bench commit -q -m base --no-verify`);
   const baseRef = sh(`git -C "${work}" rev-parse HEAD`).trim();
   return { work, baseRef };
 }

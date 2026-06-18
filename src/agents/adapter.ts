@@ -99,6 +99,20 @@ export class AgentAdapter {
         args.push('--add-dir', opts.cwd);
         if (writable) {
           args.push('--permission-mode', 'bypassPermissions');
+          // Eval guard: when set (e.g. by the SWE-bench harness), deny the agent
+          // any way to fetch the upstream fix — web tools and network shells.
+          if (process.env.PANGLOSS_NO_WEB === '1') {
+            args.push(
+              '--disallowedTools',
+              'WebSearch',
+              'WebFetch',
+              'Bash(curl:*)',
+              'Bash(wget:*)',
+              'Bash(gh:*)',
+              'Bash(git fetch:*)',
+              'Bash(git pull:*)'
+            );
+          }
         } else {
           // Read-only posture: only pre-approve inspection tools.
           args.push(
