@@ -19,3 +19,17 @@ describe('parseTestOutput', () => {
     expect(parseTestOutput('weird custom runner output', false)).toEqual({ passed: 0, failed: 1, total: 1 });
   });
 });
+
+describe('parseTestOutput — vitest format', () => {
+  it('parses vitest output with failures and passes', () => {
+    expect(parseTestOutput('Tests  2 failed | 10 passed (12)', false)).toEqual({ passed: 10, failed: 2, total: 12 });
+  });
+
+  it('parses vitest all-passing output', () => {
+    expect(parseTestOutput('Tests  5 passed (5)', true)).toEqual({ passed: 5, failed: 0, total: 5 });
+  });
+
+  it('uses parenthesized total so skipped entries do not corrupt total', () => {
+    expect(parseTestOutput('Tests  1 failed | 8 passed | 1 skipped (10)', false)).toEqual({ passed: 8, failed: 1, total: 10 });
+  });
+});

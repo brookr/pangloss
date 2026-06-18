@@ -68,6 +68,15 @@ export function parseTestOutput(
     return { passed, failed, total };
   }
 
+  // Vitest: "Tests  2 failed | 10 passed (12)"  — two spaces, NO colon, parenthesized grand total
+  const vitestLine = output.split('\n').find((l) => /^\s*Tests\s{2,}/.test(l));
+  if (vitestLine) {
+    const total = num(vitestLine.match(/\((\d+)\)/));
+    const passed = num(vitestLine.match(/(\d+)\s+passed/));
+    const failed = num(vitestLine.match(/(\d+)\s+failed/));
+    return { passed, failed, total: total || passed + failed };
+  }
+
   // Mocha / generic: "12 passing", "3 failing"
   const passing = output.match(/(\d+)\s+passing/);
   const failing = output.match(/(\d+)\s+failing/);
