@@ -1,6 +1,6 @@
 import { AgentAdapter } from './agents/adapter.js';
 import { WorktreeManager } from './worktree.js';
-import { AcceptanceSuite, PanglossConfig, TargetManifest } from './types.js';
+import { AcceptanceSuite, Conventions, PanglossConfig, TargetManifest } from './types.js';
 
 export interface Logger {
   info(msg: string): void;
@@ -42,8 +42,9 @@ export interface RunContext {
    */
   acceptanceSuite: AcceptanceSuite | null;
   /**
-   * This team's review taste, distilled from the repo's git history and injected
-   * into the review prompt. Null when disabled or no history is available.
+   * The project conventions guide (Phase 0): documented conventions fused with
+   * patterns learned from git history. Consumed by plan/acceptance/code/review.
+   * Null when disabled or there's nothing to learn from.
    */
-  reviewPatterns: string | null;
+  conventions: Conventions | null;
 }

@@ -30,7 +30,7 @@ export async function runPlanPhase(ctx: RunContext): Promise<PanglossPlan> {
     await mapPool(ctx.adapters, ctx.config.max_parallel_agents, async (adapter) => {
       const res = await adapter.run({
         mode: 'plan',
-        prompt: P.planDraftPrompt(request, clarifications),
+        prompt: P.planDraftPrompt(request, clarifications, ctx.conventions?.condensed),
         cwd: ctx.repoRoot,
         system: composeSystem(adapter.preset, 'plan'),
         timeoutMs: adapter.timeoutMs,
@@ -111,7 +111,7 @@ async function synthesize(
 ): Promise<PanglossPlan> {
   const res = await synth.run({
     mode: 'synthesize',
-    prompt: P.synthesizePrompt(request, clarifications, drafts),
+    prompt: P.synthesizePrompt(request, clarifications, drafts, ctx.conventions?.condensed),
     cwd: ctx.repoRoot,
     system: composeSystem(synth.preset, 'synthesize'),
     timeoutMs: synth.timeoutMs

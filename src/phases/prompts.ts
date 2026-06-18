@@ -49,7 +49,7 @@ edge cases, scope boundaries, and how success is tested.
 Return ONLY a JSON array of question strings, e.g. ["...", "..."]. No prose.`;
 }
 
-export function planDraftPrompt(request: string, clarifications: QA[]): string {
+export function planDraftPrompt(request: string, clarifications: QA[], conventions?: string | null): string {
   return `You are drafting an implementation plan. Inspect the repository in your
 current directory (read-only) and design the best plan you can.
 
@@ -58,16 +58,27 @@ REQUEST:
 
 CLARIFICATIONS:
 ${qaBlock(clarifications)}
-
+${conventionsBlock(conventions)}
 Write a plan that is specific to THIS codebase: name real files, real commands,
-and concrete acceptance criteria that a test could verify. Bring your own best
-judgment — other agents are drafting independently and the strongest ideas win.
+and concrete acceptance criteria that a test could verify. Fold the project
+conventions into your steps and acceptance_criteria (e.g. scoping, validation,
+coverage). Bring your own best judgment — other agents are drafting independently
+and the strongest ideas win.
 
 Return ONLY a JSON object matching this schema (no markdown, no prose):
 ${PLAN_SCHEMA}`;
 }
 
-export function synthesizePrompt(request: string, clarifications: QA[], drafts: PanglossPlan[]): string {
+function conventionsBlock(conventions?: string | null): string {
+  return conventions ? `\nPROJECT CONVENTIONS (this codebase's established rules — honor them):\n${conventions}\n` : '';
+}
+
+export function synthesizePrompt(
+  request: string,
+  clarifications: QA[],
+  drafts: PanglossPlan[],
+  conventions?: string | null
+): string {
   const draftBlock = drafts
     .map((d, i) => `### Draft ${i + 1} (by ${d.synthesized_by ?? 'agent'})\n${JSON.stringify(d, null, 2)}`)
     .join('\n\n');
@@ -83,7 +94,7 @@ REQUEST:
 
 CLARIFICATIONS:
 ${qaBlock(clarifications)}
-
+${conventionsBlock(conventions)}
 DRAFTS:
 ${draftBlock}
 
@@ -91,7 +102,7 @@ Return ONLY a JSON object matching this schema (no markdown, no prose):
 ${PLAN_SCHEMA}`;
 }
 
-export function acceptanceDraftPrompt(plan: PanglossPlan, dir: string): string {
+export function acceptanceDraftPrompt(plan: PanglossPlan, dir: string, conventions?: string | null): string {
   return `You are writing the ACCEPTANCE TESTS that will define "done" for the plan
 below — the objective gate every implementation must pass. Inspect the repository
 (read-only) FIRST: identify the test framework, conventions, and the exact import
@@ -99,7 +110,7 @@ paths/modules these tests must exercise.
 
 PLAN & ACCEPTANCE CRITERIA:
 ${JSON.stringify(plan, null, 2)}
-
+${conventions ? `\nPROJECT CONVENTIONS — encode the TESTABLE ones as acceptance tests too (e.g. tenancy scoping, validation/rejection, ordering/caps), not just the plan's criteria:\n${conventions}\n` : ''}
 Write executable tests, in the repo's existing framework, that:
 - Verify EACH acceptance criterion concretely (specific inputs → specific expected outputs). Prefer strict matchers (exact equality), not loose truthiness.
 - Exercise the REAL code/modules under test via their real import paths — not mocks of the thing being built.
@@ -175,9 +186,9 @@ ${PLAN_SCHEMA}`;
 export function codePrompt(
   plan: PanglossPlan,
   manifest: TargetManifest,
-  opts: { feedbackTail?: string; revision?: boolean } = {}
+  opts: { feedbackTail?: string; revision?: boolean; conventions?: string | null } = {}
 ): string {
-  const { feedbackTail, revision } = opts;
+  const { feedbackTail, revision, conventions } = opts;
   const cmds = [
     manifest.setup ? `- setup:  ${manifest.setup} (dependencies may already be installed)` : null,
     manifest.build ? `- build:  ${manifest.build}` : null,
@@ -201,10 +212,15 @@ Make ALL of them pass. You MAY refine an acceptance test ONLY to correct a genui
     ? `Your worktree ALREADY CONTAINS a working implementation — the winner chosen last round. IMPROVE it by applying the revision plan below; do NOT rewrite from scratch, and preserve what already passes.`
     : `Implement the following plan in your current worktree.`;
 
+  const conventionsSection = conventions
+    ? `\nPROJECT CONVENTIONS (write code that follows these from the start — they are how this codebase is built):\n${conventions}\n`
+    : '';
+
   return `${intro} Follow the Worktree Contract in your system prompt exactly.
 
 PLAN:
 ${JSON.stringify(plan, null, 2)}
+${conventionsSection}
 
 VALIDATION COMMANDS (run these to check your work; iterate until green):
 ${cmds || '(none configured)'}
@@ -219,23 +235,32 @@ Requirements:
 Begin now.`;
 }
 
-export function reviewPatternsPrompt(corpus: string): string {
-  return `You are profiling a software team's CODE-REVIEW TASTE from their git history.
-Below are commit messages from their review follow-ups and fixes — the things this
-team repeatedly catches and corrects. Distill the RECURRING, codebase-specific
-concerns into a concise checklist a reviewer should apply to NEW code in THIS repo.
+export function conventionsPrompt(docsText: string, corpusText: string): string {
+  const documented = docsText
+    ? `DOCUMENTED CONVENTIONS (AUTHORITATIVE — these take precedence; preserve their rules and intent, and NEVER contradict them):\n${docsText}\n`
+    : 'No conventions are documented in the repo yet — build the guide from the observed patterns and codebase reality.\n';
+  const observed = corpusText
+    ? `\nOBSERVED PATTERNS (learned from this team's review/fix history — SUPPLEMENTARY; add only recurring conventions NOT already covered above, and mark each "(observed)"):\n${corpusText}\n`
+    : '';
 
-Rules:
-- 6–12 themed groups. Each: a short bold name + 1 line on what to look for.
-- Be specific to the evidence (e.g. tenancy/mode scoping, idempotency & replay-safety,
-  soft-delete handling, schema validation over casts, dead/stale-code hygiene, auth in
-  middleware, test coverage of new paths). Avoid generic advice not supported by the commits.
-- No preamble, no conclusion — just the checklist.
+  return `You are establishing the ENGINEERING CONVENTIONS for a software project — one
+guide every contributor and reviewer follows. Inspect the repository (read-only) to
+ground it in how this codebase is actually built.
 
-COMMIT MESSAGES:
-${corpus}
+${documented}${observed}
+Produce ONE concise conventions guide specific to THIS codebase, structured EXACTLY as:
 
-Return a compact markdown checklist.`;
+## Most important rules
+- up to 10 bullets — the conventions that must apply to EVERY change (highest signal first)
+
+## Conventions
+Grouped detail (only groups supported by the evidence — e.g. tenancy/scoping, validation,
+error handling, data & idempotency, testing & coverage, structure & naming, security/auth,
+accessibility). For each rule: what to do and briefly why. Mark anything sourced ONLY from
+history "(observed)". Where a documented rule and an observed one conflict, follow the
+DOCUMENTED rule.
+
+Be specific and actionable — no generic filler, no preamble. Return markdown only.`;
 }
 
 export function reviewPrompt(args: {
@@ -246,13 +271,13 @@ export function reviewPrompt(args: {
   tests: string;
   diffStat: string;
   diff: string;
-  /** This team's review taste, learned from git history. */
-  teamPatterns?: string | null;
+  /** The project conventions guide. */
+  conventions?: string | null;
   /** Acceptance-gate audit for this candidate (when the gate is on). */
   acceptance?: { verdict: string; passedVsCanonical: number; total: number; modified: boolean } | null;
 }): string {
-  const patternsSection = args.teamPatterns
-    ? `\nTEAM REVIEW PATTERNS (learned from THIS repo's history — apply them; these are the things this team consistently catches):\n${args.teamPatterns}\n`
+  const patternsSection = args.conventions
+    ? `\nPROJECT CONVENTIONS (apply them — this is how THIS codebase is built; flag any violation):\n${args.conventions}\n`
     : '';
 
   const acc = args.acceptance;

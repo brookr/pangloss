@@ -112,7 +112,7 @@ async function runOneAgent(
       ctx.logger.agent(adapter.id, `code iteration ${iter}/${ctx.maxCodeIterations}…`);
       const res = await adapter.run({
         mode: 'code',
-        prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision }),
+        prompt: codePrompt(plan, ctx.manifest, { feedbackTail, revision, conventions: ctx.conventions?.full }),
         cwd: wt.path,
         system: composeSystem(adapter.preset, 'code'),
         timeoutMs: adapter.timeoutMs,

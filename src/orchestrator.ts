@@ -6,7 +6,7 @@ import { loadConfig, resolveRoster } from './config.js';
 import { Logger, RunContext } from './context.js';
 import { runPlanPhase, runRevisionPlan } from './phases/plan.js';
 import { runAcceptancePhase } from './phases/acceptance.js';
-import { learnReviewPatterns } from './phases/review-patterns.js';
+import { establishConventions } from './phases/conventions.js';
 import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
@@ -89,10 +89,14 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     round: 0,
     maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds),
     acceptanceSuite: null,
-    reviewPatterns: null
+    conventions: null
   };
 
   try {
+    // Phase 0 — establish the project conventions guide before anything else, so
+    // it informs planning, acceptance, coding, and review.
+    ctx.conventions = await establishConventions(ctx);
+
     // Round 0 begins with diverse drafts + synthesis; revision rounds re-plan from the brief.
     let plan = await runPlanPhase(ctx);
     let roundBase = baseRef;
@@ -106,9 +110,6 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       ctx.baseRef = acceptance.baseRef;
       roundBase = acceptance.baseRef;
     }
-
-    // Learn this team's review taste from git history once, for every round's review.
-    ctx.reviewPatterns = await learnReviewPatterns(ctx);
 
     let selection: SelectionOutcome | null = null;
     let finalWorktrees: Worktree[] = [];

@@ -46,7 +46,7 @@ export async function runAcceptancePhase(ctx: RunContext, plan: PanglossPlan): P
     await mapPool(ctx.adapters, ctx.config.max_parallel_agents, async (adapter) => {
       const res = await adapter.run({
         mode: 'plan',
-        prompt: acceptanceDraftPrompt(plan, dir),
+        prompt: acceptanceDraftPrompt(plan, dir, ctx.conventions?.full),
         cwd: ctx.repoRoot,
         system: composeSystem(adapter.preset, 'plan'),
         timeoutMs: adapter.timeoutMs,

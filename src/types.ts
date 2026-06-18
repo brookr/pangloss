@@ -150,11 +150,11 @@ export interface PanglossConfig {
   /** Max retries per model call on transient/rate-limit (429) failures (exponential backoff). */
   max_retries: number;
   /**
-   * Learn this repo's review taste from its git history (cached under .pangloss/)
-   * and inject it into the review prompt. Default true; set false for throwaway
-   * targets (e.g. benchmarks on fresh clones) to skip the extra call.
+   * Establish a project conventions guide (Phase 0) from documented conventions +
+   * git-history patterns, cached under .pangloss/, and feed it to every phase.
+   * Default true; set false for throwaway targets (e.g. benchmark clones).
    */
-  review_patterns?: boolean;
+  conventions?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +186,14 @@ export interface PanglossPlan {
 // ---------------------------------------------------------------------------
 // Acceptance gate — spec-derived, mutable-but-audited tests
 // ---------------------------------------------------------------------------
+
+/** The project conventions guide (Phase 0), consumed by every later phase. */
+export interface Conventions {
+  /** The whole guide — injected into code + review prompts. */
+  full: string;
+  /** The headline rules only — injected into the (token-sensitive) plan prompt. */
+  condensed: string;
+}
 
 /** One acceptance-test file: path relative to the repo root + its contents. */
 export interface AcceptanceFile {

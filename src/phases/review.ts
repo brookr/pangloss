@@ -87,7 +87,7 @@ export async function runReviewPhase(
         tests: `${candidate.outcome.tests.passed}/${candidate.outcome.tests.total} (failed ${candidate.outcome.tests.failed})`,
         diffStat: candidate.outcome.diffStat ?? '',
         diff: candidate.diff,
-        teamPatterns: ctx.reviewPatterns,
+        conventions: ctx.conventions?.full ?? null,
         acceptance: candidate.outcome.acceptance
           ? {
               verdict: candidate.outcome.acceptance.verdict,
