@@ -55,6 +55,7 @@ results/
 bench/data/
 bench/swe/repos/
 bench/swe/preds-*.jsonl
+bench/swe/cands-*.jsonl
 bench/swe/*.log
 pangloss-*.json
 gold.*.json

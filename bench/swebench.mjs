@@ -40,12 +40,18 @@ const RUN = arg('run-id', 'pang');
 const INSTANCES = arg('instances', 'all');
 const TIMEOUT = parseInt(arg('timeout', '15'), 10);
 const CONC = parseInt(arg('concurrency', '2'), 10);
+const ROUNDS = parseInt(arg('rounds', '1'), 10); // fusion rounds (1 = single round; >1 enables the revise loop)
 
 const tasks = JSON.parse(readFileSync(join(SWE, 'tasks.json'), 'utf8')).filter(
   (t) => INSTANCES === 'all' || INSTANCES.split(',').includes(t.instance_id)
 );
 
 const sh = (cmd, opts = {}) => execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1 << 28, ...opts }).toString();
+
+// In diverse mode, record every lane's candidate patch (recovered from its kept
+// git branch) so we can later tell "no lane found the fix" from "select picked
+// the wrong lane." Keyed by instance_id; written to a cands-<run>.jsonl sidecar.
+const candidatesByInstance = {};
 
 function repoClone(repo) {
   const dir = join(REPOS, repo.replace('/', '__'));
@@ -96,7 +102,7 @@ async function generate(task) {
       });
       return capturePatch(work, baseRef);
     }
-    const cfg = { ...getDefaultConfig(), max_rounds: 1, max_retries: 6, manifest: { setup: '', build: '', test: '' } };
+    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, manifest: { setup: '', build: '', test: '' } };
     const cfgPath = join(work, 'swe.config.json');
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     const result = await executeRun({
@@ -107,10 +113,20 @@ async function generate(task) {
       interactive: false,
       autoApprove: true,
       keepWorktrees: true,
-      maxRounds: 1,
+      maxRounds: ROUNDS,
       timeoutMinutes: TIMEOUT
     });
-    return result.selection ? capturePatch(result.selection.winnerWorktree, baseRef) : '';
+    if (!result.selection) return '';
+    // Recover every candidate's diff from its (kept) branch for diversity analysis.
+    const winnerId = result.selection.winnerAgentId;
+    candidatesByInstance[task.instance_id] = result.selection.scoreboard.map((s) => {
+      let patch = '';
+      try {
+        patch = sh(`git -C "${work}" diff ${baseRef} ${s.branch} -- . ":(exclude).pangloss" ":(exclude).gitignore" ":(exclude)swe.config.json"`);
+      } catch { /* branch may be gone */ }
+      return { agentId: s.agentId, score: s.score, meets: s.meets, winner: s.agentId === winnerId, patchLen: patch.length, patch };
+    });
+    return capturePatch(result.selection.winnerWorktree, baseRef);
   } catch (e) {
     process.stderr.write(`  ${task.instance_id} gen error: ${String(e.message).slice(0, 80)}\n`);
     return '';
@@ -130,4 +146,13 @@ const outPath = join(SWE, `preds-${RUN}.jsonl`);
 writeFileSync(outPath, preds.map((p) => JSON.stringify(p)).join('\n') + '\n');
 const nonEmpty = preds.filter((p) => p.model_patch.trim()).length;
 console.log(`\nwrote ${preds.length} predictions (${nonEmpty} non-empty) to ${outPath}`);
+
+if (Object.keys(candidatesByInstance).length) {
+  const candPath = join(SWE, `cands-${RUN}.jsonl`);
+  const lines = Object.entries(candidatesByInstance).map(([instance_id, candidates]) =>
+    JSON.stringify({ instance_id, candidates })
+  );
+  writeFileSync(candPath, lines.join('\n') + '\n');
+  console.log(`wrote per-lane candidates for ${lines.length} tasks to ${candPath}`);
+}
 console.log(`score with:\n  python3 -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Lite \\\n    --predictions_path ${outPath} --run_id ${RUN} --max_workers 4`);
