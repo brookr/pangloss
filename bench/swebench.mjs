@@ -1,0 +1,133 @@
+#!/usr/bin/env node
+// SWE-bench Lite generation runner for Pangloss.
+//
+// For each task: clone the repo @ base_commit, have Pangloss fix the issue
+// (problem_statement) WITHOUT ever seeing the hidden FAIL_TO_PASS tests, and
+// capture the winner's diff as the prediction. Score separately with the
+// official harness:
+//   python3 -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Lite \
+//     --predictions_path bench/swe/preds-<run>.jsonl --run_id <run> --max_workers 4
+//
+// Modes:
+//   solo    — one agent edits the repo directly (the control)
+//   diverse — full Pangloss pipeline (comma roster), winner's patch
+//
+//   node bench/swebench.mjs --mode solo    --model claude:sonnet --instances all --run-id solo1
+//   node bench/swebench.mjs --mode diverse --model "claude:sonnet,claude:haiku,oss:gpt-oss:120b" --run-id div1
+
+import 'dotenv/config';
+import { readFileSync, writeFileSync, appendFileSync, mkdtempSync, existsSync, mkdirSync } from 'fs';
+import { execSync } from 'child_process';
+import { tmpdir } from 'os';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { AgentAdapter } from '../dist/agents/adapter.js';
+import { getDefaultConfig, parseDynamicPreset } from '../dist/config.js';
+import { executeRun } from '../dist/orchestrator.js';
+import { mapPool } from '../dist/util/pool.js';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SWE = join(HERE, 'swe');
+const REPOS = join(SWE, 'repos');
+
+function arg(n, d) {
+  const i = process.argv.indexOf(`--${n}`);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d;
+}
+const MODE = arg('mode', 'diverse');
+const MODEL = arg('model', 'claude:sonnet');
+const RUN = arg('run-id', 'pang');
+const INSTANCES = arg('instances', 'all');
+const TIMEOUT = parseInt(arg('timeout', '15'), 10);
+const CONC = parseInt(arg('concurrency', '2'), 10);
+
+const tasks = JSON.parse(readFileSync(join(SWE, 'tasks.json'), 'utf8')).filter(
+  (t) => INSTANCES === 'all' || INSTANCES.split(',').includes(t.instance_id)
+);
+
+const sh = (cmd, opts = {}) => execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1 << 28, ...opts }).toString();
+
+function repoClone(repo) {
+  const dir = join(REPOS, repo.replace('/', '__'));
+  if (!existsSync(dir)) {
+    mkdirSync(REPOS, { recursive: true });
+    process.stderr.write(`cloning ${repo}…\n`);
+    sh(`git clone --quiet https://github.com/${repo} "${dir}"`);
+  }
+  return dir;
+}
+
+function setupWork(task) {
+  const cache = repoClone(task.repo);
+  const work = mkdtempSync(join(tmpdir(), 'swe-'));
+  sh(`git clone --quiet "${cache}" "${work}"`);
+  sh(`git -C "${work}" checkout --quiet -B pangbase ${task.base_commit}`);
+  // Keep Pangloss control files out of the patch.
+  appendFileSync(join(work, '.gitignore'), '\n.pangloss/\nswe.config.json\n');
+  sh(`git -C "${work}" add .gitignore && git -C "${work}" -c user.email=b@b.co -c user.name=bench commit -q -m base --no-verify`);
+  const baseRef = sh(`git -C "${work}" rev-parse HEAD`).trim();
+  return { work, baseRef };
+}
+
+/** Diff of `dir` vs baseRef, excluding our control files — this is the SWE-bench patch. */
+function capturePatch(dir, baseRef) {
+  sh(`git -C "${dir}" add -A`);
+  return sh(`git -C "${dir}" diff --cached ${baseRef} -- . ":(exclude).pangloss" ":(exclude).gitignore" ":(exclude)swe.config.json"`);
+}
+
+const REQUEST = (task) =>
+  `Resolve the following GitHub issue by editing the repository's SOURCE code. Make the minimal ` +
+  `change that fixes it. Do NOT add, modify, or delete any test files — only the implementation.\n\n` +
+  `# ISSUE\n${task.problem_statement}`;
+
+async function generate(task) {
+  const { work, baseRef } = setupWork(task);
+  try {
+    if (MODE === 'solo') {
+      const preset = parseDynamicPreset(MODEL) ?? getDefaultConfig().agent_presets[MODEL];
+      if (!preset) throw new Error(`unknown model ${MODEL}`);
+      const adapter = new AgentAdapter(preset, TIMEOUT * 60_000, 6);
+      await adapter.run({
+        mode: 'code',
+        prompt: REQUEST(task),
+        cwd: work,
+        system: 'You are an expert software engineer fixing a bug in this repository. Make the minimal change. Never modify test files.',
+        timeoutMs: TIMEOUT * 60_000
+      });
+      return capturePatch(work, baseRef);
+    }
+    const cfg = { ...getDefaultConfig(), max_rounds: 1, max_retries: 6, manifest: { setup: '', build: '', test: '' } };
+    const cfgPath = join(work, 'swe.config.json');
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    const result = await executeRun({
+      repoRoot: work,
+      configPath: cfgPath,
+      roster: MODEL,
+      request: REQUEST(task),
+      interactive: false,
+      autoApprove: true,
+      keepWorktrees: true,
+      maxRounds: 1,
+      timeoutMinutes: TIMEOUT
+    });
+    return result.selection ? capturePatch(result.selection.winnerWorktree, baseRef) : '';
+  } catch (e) {
+    process.stderr.write(`  ${task.instance_id} gen error: ${String(e.message).slice(0, 80)}\n`);
+    return '';
+  }
+}
+
+// ---- main ----
+process.stderr.write(`SWE-bench gen — mode=${MODE} model=${MODEL} tasks=${tasks.length} conc=${CONC}\n`);
+const model_name = `pangloss-${MODE}-${RUN}`;
+const preds = await mapPool(tasks, CONC, async (task) => {
+  const patch = await generate(task);
+  process.stderr.write(`  ${patch ? '📝' : '∅ '} ${task.instance_id} (${patch.length} chars)\n`);
+  return { instance_id: task.instance_id, model_patch: patch, model_name_or_path: model_name };
+});
+
+const outPath = join(SWE, `preds-${RUN}.jsonl`);
+writeFileSync(outPath, preds.map((p) => JSON.stringify(p)).join('\n') + '\n');
+const nonEmpty = preds.filter((p) => p.model_patch.trim()).length;
+console.log(`\nwrote ${preds.length} predictions (${nonEmpty} non-empty) to ${outPath}`);
+console.log(`score with:\n  python3 -m swebench.harness.run_evaluation --dataset_name princeton-nlp/SWE-bench_Lite \\\n    --predictions_path ${outPath} --run_id ${RUN} --max_workers 4`);

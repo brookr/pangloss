@@ -1,0 +1,56 @@
+[
+  {
+    "instance_id": "pallets__flask-4045",
+    "repo": "pallets/flask",
+    "base_commit": "d8c37f43724cd9fb0870f77877b7c4c7e38a19e0",
+    "problem_statement": "Raise error when blueprint name contains a dot\nThis is required since every dot is now significant since blueprints can be nested. An error was already added for endpoint names in 1.0, but should have been added for this as well.\n"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "base_commit": "4c288bc97ea371817199908d0d9b12de9dae327e",
+    "problem_statement": "Add a file mode parameter to flask.Config.from_file()\nPython 3.11 introduced native TOML support with the `tomllib` package. This could work nicely with the `flask.Config.from_file()` method as an easy way to load TOML config files:\r\n\r\n```python\r\napp.config.from_file(\"config.toml\", tomllib.load)\r\n```\r\n\r\nHowever, `tomllib.load()` takes an object readable in binary mode, while `flask.Config.from_file()` opens a file in text mode, resulting in this error:\r\n\r\n```\r\nTypeError: File must be opened in binary mode, e.g. use `open('foo.toml', 'rb')`\r\n```\r\n\r\nWe can get around this with a more verbose expression, like loading from a file opened with the built-in `open()` function and passing the `dict` to `app.Config.from_mapping()`:\r\n\r\n```python\r\n# We have to repeat the path joining that from_file() does\r\nwith open(os.path.join(app.config.root_path, \"config.toml\"), \"rb\") as file:\r\n    app.config.from_mapping(tomllib.load(file))\r\n```\r\n\r\nBut adding a file mode parameter to `flask.Config.from_file()` would enable the use of a simpler expression. E.g.:\r\n\r\n```python\r\napp.config.from_file(\"config.toml\", tomllib.load, mode=\"b\")\r\n```\r\n\n"
+  },
+  {
+    "instance_id": "pallets__flask-5063",
+    "repo": "pallets/flask",
+    "base_commit": "182ce3dd15dfa3537391c3efaf9c3ff407d134d4",
+    "problem_statement": "Flask routes to return domain/sub-domains information\nCurrently when checking **flask routes** it provides all routes but **it is no way to see which routes are assigned to which subdomain**.\r\n\r\n**Default server name:**\r\nSERVER_NAME: 'test.local'\r\n\r\n**Domains (sub-domains):**\r\ntest.test.local\r\nadmin.test.local\r\ntest.local\r\n\r\n**Adding blueprints:**\r\napp.register_blueprint(admin_blueprint,url_prefix='',subdomain='admin')\r\napp.register_blueprint(test_subdomain_blueprint,url_prefix='',subdomain='test')\r\n\r\n\r\n```\r\n$ flask routes\r\n * Tip: There are .env or .flaskenv files present. Do \"pip install python-dotenv\" to use them.\r\nEndpoint                                                 Methods    Rule\r\n-------------------------------------------------------  ---------  ------------------------------------------------\r\nadmin_blueprint.home                                      GET        /home\r\ntest_subdomain_blueprint.home                             GET        /home\r\nstatic                                                    GET        /static/<path:filename>\r\n...\r\n```\r\n\r\n\r\n**Feature request**\r\nIt will be good to see something like below (that will make more clear which route for which subdomain, because now need to go and check configuration).\r\n**If it is not possible to fix routes**, can you add or tell which method(s) should be used to get below information from flask? \r\n\r\n```\r\n$ flask routes\r\n * Tip: There are .env or .flaskenv files present. Do \"pip install python-dotenv\" to use them.\r\nDomain                Endpoint                                             Methods    Rule\r\n-----------------   ----------------------------------------------------  ----------  ------------------------------------------------\r\nadmin.test.local     admin_blueprint.home                                  GET        /home\r\ntest.test.local      test_subdomain_blueprint.home                         GET        /home\r\ntest.local           static                                                GET        /static/<path:filename>\r\n...\r\n```\r\n\n"
+  },
+  {
+    "instance_id": "psf__requests-1963",
+    "repo": "psf/requests",
+    "base_commit": "110048f9837f8441ea536804115e80b69f400277",
+    "problem_statement": "`Session.resolve_redirects` copies the original request for all subsequent requests, can cause incorrect method selection\nConsider the following redirection chain:\n\n```\nPOST /do_something HTTP/1.1\nHost: server.example.com\n...\n\nHTTP/1.1 303 See Other\nLocation: /new_thing_1513\n\nGET /new_thing_1513\nHost: server.example.com\n...\n\nHTTP/1.1 307 Temporary Redirect\nLocation: //failover.example.com/new_thing_1513\n```\n\nThe intermediate 303 See Other has caused the POST to be converted to\na GET.  The subsequent 307 should preserve the GET.  However, because\n`Session.resolve_redirects` starts each iteration by copying the _original_\nrequest object, Requests will issue a POST!\n\n"
+  },
+  {
+    "instance_id": "psf__requests-2148",
+    "repo": "psf/requests",
+    "base_commit": "fe693c492242ae532211e0c173324f09ca8cf227",
+    "problem_statement": "socket.error exception not caught/wrapped in a requests exception (ConnectionError perhaps?)\nI just noticed a case where I had a socket reset on me, and was raised to me as a raw socket error as opposed to something like a requests.exceptions.ConnectionError:\n\n```\n  File \"/home/rtdean/***/***/***/***/***/***.py\", line 67, in dir_parse\n    root = ElementTree.fromstring(response.text)\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/requests-2.3.0-py2.7.egg/requests/models.py\", line 721, in text\n    if not self.content:\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/requests-2.3.0-py2.7.egg/requests/models.py\", line 694, in content\n    self._content = bytes().join(self.iter_content(CONTENT_CHUNK_SIZE)) or bytes()\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/requests-2.3.0-py2.7.egg/requests/models.py\", line 627, in generate\n    for chunk in self.raw.stream(chunk_size, decode_content=True):\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/requests-2.3.0-py2.7.egg/requests/packages/urllib3/response.py\", line 240, in stream\n    data = self.read(amt=amt, decode_content=decode_content)\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/requests-2.3.0-py2.7.egg/requests/packages/urllib3/response.py\", line 187, in read\n    data = self._fp.read(amt)\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/httplib.py\", line 543, in read\n    return self._read_chunked(amt)\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/httplib.py\", line 612, in _read_chunked\n    value.append(self._safe_read(chunk_left))\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/httplib.py\", line 658, in _safe_read\n    chunk = self.fp.read(min(amt, MAXAMOUNT))\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/socket.py\", line 380, in read\n    data = self._sock.recv(left)\n  File \"/home/rtdean/.pyenv/versions/2.7.6/lib/python2.7/site-packages/gevent-1.0.1-py2.7-linux-x86_64.egg/gevent/socket.py\", line 385, in recv\n    return sock.recv(*args)\nsocket.error: [Errno 104] Connection reset by peer\n```\n\nNot sure if this is by accident or design... in general, I guess I'd expect a requests exception when using requests, but I can start looking for socket errors and the like as well.\n\n"
+  },
+  {
+    "instance_id": "psf__requests-2317",
+    "repo": "psf/requests",
+    "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+    "problem_statement": "method = builtin_str(method) problem\nIn requests/sessions.py is a command:\n\nmethod = builtin_str(method)\nConverts method from\nb\u2019GET\u2019\nto\n\"b'GET\u2019\"\n\nWhich is the literal string, no longer a binary string.  When requests tries to use the method \"b'GET\u2019\u201d, it gets a 404 Not Found response.\n\nI am using python3.4 and python-neutronclient (2.3.9) with requests (2.4.3).  neutronclient is broken because it uses this \"args = utils.safe_encode_list(args)\" command which converts all the values to binary string, including method.\n\nI'm not sure if this is a bug with neutronclient or a bug with requests, but I'm starting here.  Seems if requests handled the method value being a binary string, we wouldn't have any problem.\n\nAlso, I tried in python2.6 and this bug doesn't exist there. Some difference between 2.6 and 3.4 makes this not work right.\n\n"
+  },
+  {
+    "instance_id": "psf__requests-2674",
+    "repo": "psf/requests",
+    "base_commit": "0be38a0c37c59c4b66ce908731da15b401655113",
+    "problem_statement": "urllib3 exceptions passing through requests API\nI don't know if it's a design goal of requests to hide urllib3's exceptions and wrap them around requests.exceptions types.\n\n(If it's not IMHO it should be, but that's another discussion)\n\nIf it is, I have at least two of them passing through that I have to catch in addition to requests' exceptions. They are requests.packages.urllib3.exceptions.DecodeError and requests.packages.urllib3.exceptions.TimeoutError (this one I get when a proxy timeouts)\n\nThanks!\n\n"
+  },
+  {
+    "instance_id": "psf__requests-3362",
+    "repo": "psf/requests",
+    "base_commit": "36453b95b13079296776d11b09cab2567ea3e703",
+    "problem_statement": "Uncertain about content/text vs iter_content(decode_unicode=True/False)\nWhen requesting an application/json document, I'm seeing `next(r.iter_content(16*1024, decode_unicode=True))` returning bytes, whereas `r.text` returns unicode. My understanding was that both should return a unicode object. In essence, I thought \"iter_content\" was equivalent to \"iter_text\" when decode_unicode was True. Have I misunderstood something? I can provide an example if needed.\n\nFor reference, I'm using python 3.5.1 and requests 2.10.0.\n\nThanks!\n\n"
+  },
+  {
+    "instance_id": "psf__requests-863",
+    "repo": "psf/requests",
+    "base_commit": "a0df2cbb10419037d11d04352b3175405ab52941",
+    "problem_statement": "Allow lists in the dict values of the hooks argument\nCurrently the Request class has a .register_hook() method but it parses the dictionary it expects from it's hooks argument weirdly: the argument can only specify one hook function per hook.  If you pass in a list of hook functions per hook the code in Request.**init**() will wrap the list in a list which then fails when the hooks are consumed (since a list is not callable).  This is especially annoying since you can not use multiple hooks from a session.  The only way to get multiple hooks now is to create the request object without sending it, then call .register_hook() multiple times and then finally call .send().\n\nThis would all be much easier if Request.**init**() parsed the hooks parameter in a way that it accepts lists as it's values.\n\n"
+  }
+]

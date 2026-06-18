@@ -53,6 +53,12 @@ jspm_packages/
 final-workspace/
 results/
 bench/data/
+bench/swe/repos/
+bench/swe/preds-*.jsonl
+bench/swe/*.log
+pangloss-*.json
+gold.*.json
+*.sanity.json
 
 # Claude Code — keep shared skills under version control, ignore local settings
 .claude/*
