@@ -107,14 +107,15 @@ async function baseline(adapter, ex) {
 function setupRepo(ex) {
   const dir = mkdtempSync(join(tmpdir(), 'pg-repo-'));
   writeFileSync(join(dir, ex.stubName), ex.stub);
-  copyFileSync(ex.testPath, join(dir, ex.testName));
-  writeFileSync(join(dir, 'INSTRUCTIONS.md', ), ex.instructions);
+  // HIDDEN GRADER: the reference test is NEVER placed in the worktree. The agent
+  // writes its own tests to iterate against; scoring uses the held-out test it
+  // never saw. (Putting the grading test here would let the loop optimize the grader.)
+  writeFileSync(join(dir, 'INSTRUCTIONS.md'), ex.instructions);
   writeFileSync(join(dir, '.gitignore'), '.pangloss/\n');
-  // Explicitly null setup/build so the default yarn manifest doesn't leak into the python task.
   const cfg = {
     ...getDefaultConfig(),
     max_retries: 10,
-    manifest: { setup: '', build: '', test: `python3 -m pytest -q ${ex.testName}` }
+    manifest: { setup: '', build: '', test: 'python3 -m pytest -q' } // runs the agent's OWN tests, not the grader
   };
   writeFileSync(join(dir, 'pangloss.config.json'), JSON.stringify(cfg, null, 2));
   execSync('git init -q && git add -A && git -c user.email=b@b.co -c user.name=bench commit -q -m init', { cwd: dir });
@@ -124,8 +125,9 @@ function setupRepo(ex) {
 async function pipeline(roster, ex) {
   const dir = setupRepo(ex);
   const request =
-    `Implement ${ex.stubName} so the tests in ${ex.testName} pass. Keep the required public names. ` +
-    `Do not modify ${ex.testName}.\n\n# INSTRUCTIONS\n${ex.instructions}`;
+    `Implement ${ex.stubName} to satisfy the instructions below. You do NOT have the reference test ` +
+    `suite — write your OWN tests in a test_*.py file to validate your solution, and make them pass. ` +
+    `Keep the required public names exactly.\n\n# INSTRUCTIONS\n${ex.instructions}`;
   const result = await executeRun({
     repoRoot: dir,
     configPath: join(dir, 'pangloss.config.json'),
