@@ -152,7 +152,7 @@
     "portBase": 4300,
     "portOffset": 10,
     "acceptanceDir": "acceptance",
-    "acceptanceCmd": "npx jest acceptance --silent"
+    "acceptanceCmd": "npx jest \"acceptance/\" --silent"
   },
   "max_parallel_agents": 3,
   "total_timeout_minutes": 30,

@@ -33,3 +33,20 @@ describe('parseTestOutput — vitest format', () => {
     expect(parseTestOutput('Tests  1 failed | 8 passed | 1 skipped (10)', false)).toEqual({ passed: 8, failed: 1, total: 10 });
   });
 });
+
+describe('parseTestOutput — go test format', () => {
+  it('counts all-pass markers', () => {
+    const out = '--- PASS: TestFoo (0.00s)\n--- PASS: TestBar (0.00s)\nok   example/pkg 0.012s';
+    expect(parseTestOutput(out, true)).toEqual({ passed: 2, failed: 0, total: 2 });
+  });
+
+  it('counts mixed pass/fail markers', () => {
+    const out = '--- FAIL: TestFoo (0.00s)\n--- PASS: TestBar (0.00s)\nFAIL';
+    expect(parseTestOutput(out, false)).toEqual({ passed: 1, failed: 1, total: 2 });
+  });
+
+  it('counts all-fail markers', () => {
+    const out = '--- FAIL: Test1 (0.00s)\n--- FAIL: Test2 (0.00s)\nFAIL';
+    expect(parseTestOutput(out, false)).toEqual({ passed: 0, failed: 2, total: 2 });
+  });
+});

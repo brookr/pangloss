@@ -77,6 +77,11 @@ export function parseTestOutput(
     return { passed, failed, total: total || passed + failed };
   }
 
+  // Go: "--- PASS: TestFoo (0.00s)" / "--- FAIL: TestBar (0.01s)"
+  const goPass = (output.match(/^--- PASS:/gm) ?? []).length;
+  const goFail = (output.match(/^--- FAIL:/gm) ?? []).length;
+  if (goPass || goFail) return { passed: goPass, failed: goFail, total: goPass + goFail };
+
   // Mocha / generic: "12 passing", "3 failing"
   const passing = output.match(/(\d+)\s+passing/);
   const failing = output.match(/(\d+)\s+failing/);
