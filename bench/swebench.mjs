@@ -75,15 +75,35 @@ function setupWork(task) {
   return { work, baseRef };
 }
 
-/** Diff of `dir` vs baseRef, excluding our control files — this is the SWE-bench patch. */
+// Exclude our control files AND any test files: the prediction must be
+// source-only (the grader supplies its own tests), and agents are encouraged to
+// write throwaway scratch tests to verify — those must not pollute the patch.
+const PATCH_EXCLUDES = [
+  '":(exclude).pangloss"', '":(exclude).gitignore"', '":(exclude)swe.config.json"',
+  '":(exclude,glob)**/tests/**"', '":(exclude,glob)tests/**"',
+  '":(exclude,glob)**/test_*.py"', '":(exclude,glob)test_*.py"',
+  '":(exclude,glob)**/*_test.py"', '":(exclude,glob)*_test.py"',
+  '":(exclude,glob)**/conftest.py"', '":(exclude)conftest.py"'
+].join(' ');
+
+/** Diff of `dir` vs baseRef, source-only — this is the SWE-bench patch. */
 function capturePatch(dir, baseRef) {
   sh(`git -C "${dir}" add -A`);
-  return sh(`git -C "${dir}" diff --cached ${baseRef} -- . ":(exclude).pangloss" ":(exclude).gitignore" ":(exclude)swe.config.json"`);
+  return sh(`git -C "${dir}" diff --cached ${baseRef} -- . ${PATCH_EXCLUDES}`);
 }
 
 const REQUEST = (task) =>
-  `Resolve the following GitHub issue by editing the repository's SOURCE code. Make the minimal ` +
-  `change that fixes it. Do NOT add, modify, or delete any test files — only the implementation.\n\n` +
+  `Resolve the GitHub issue below by editing the repository's SOURCE code only.\n\n` +
+  `Follow this protocol:\n` +
+  `1. LOCALIZE — explore the repo and find the exact function/lines responsible. Read the ` +
+  `surrounding code and related code paths before changing anything.\n` +
+  `2. MINIMAL, SURGICAL FIX — make the smallest change that fixes the issue. Prefer adding a ` +
+  `guard or branch over rewriting. Do NOT refactor, reformat, or touch unrelated code, and ` +
+  `preserve all existing function signatures and behavior.\n` +
+  `3. DON'T REGRESS — your change must not break any currently-passing behavior. Trace every ` +
+  `call site of the code you touch and confirm each still works. Do NOT run \`pip install\` or ` +
+  `otherwise modify anything outside this repository's working tree (no host/global installs).\n` +
+  `4. DON'T TOUCH THE PROJECT'S TESTS — do not modify existing test files; the grader supplies its own.\n\n` +
   `# ISSUE\n${task.problem_statement}`;
 
 async function generate(task) {
@@ -97,7 +117,7 @@ async function generate(task) {
         mode: 'code',
         prompt: REQUEST(task),
         cwd: work,
-        system: 'You are an expert software engineer fixing a bug in this repository. Make the minimal change. Never modify test files.',
+        system: 'You are an expert software engineer. Localize the root cause, then fix it with the smallest possible surgical change to the source. Preserve all existing behavior and signatures — never break currently-passing tests. Never modify the project\'s test files.',
         timeoutMs: TIMEOUT * 60_000
       });
       return capturePatch(work, baseRef);
@@ -122,7 +142,7 @@ async function generate(task) {
     candidatesByInstance[task.instance_id] = result.selection.scoreboard.map((s) => {
       let patch = '';
       try {
-        patch = sh(`git -C "${work}" diff ${baseRef} ${s.branch} -- . ":(exclude).pangloss" ":(exclude).gitignore" ":(exclude)swe.config.json"`);
+        patch = sh(`git -C "${work}" diff ${baseRef} ${s.branch} -- . ${PATCH_EXCLUDES}`);
       } catch { /* branch may be gone */ }
       return { agentId: s.agentId, score: s.score, meets: s.meets, winner: s.agentId === winnerId, patchLen: patch.length, patch };
     });
