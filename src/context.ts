@@ -1,6 +1,6 @@
 import { AgentAdapter } from './agents/adapter.js';
 import { WorktreeManager } from './worktree.js';
-import { PanglossConfig, TargetManifest } from './types.js';
+import { AcceptanceSuite, PanglossConfig, TargetManifest } from './types.js';
 
 export interface Logger {
   info(msg: string): void;
@@ -36,4 +36,9 @@ export interface RunContext {
   round: number;
   /** Max revise-loop rounds before stopping (loop also stops on convergence). */
   maxRounds: number;
+  /**
+   * The canonical acceptance suite (C₀) for this run, set by the acceptance
+   * phase when the gate is enabled. Null when the gate is off.
+   */
+  acceptanceSuite: AcceptanceSuite | null;
 }

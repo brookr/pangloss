@@ -5,6 +5,7 @@ import { AgentAdapter } from './agents/adapter.js';
 import { loadConfig, resolveRoster } from './config.js';
 import { Logger, RunContext } from './context.js';
 import { runPlanPhase, runRevisionPlan } from './phases/plan.js';
+import { runAcceptancePhase } from './phases/acceptance.js';
 import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
@@ -85,13 +86,25 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     timeoutMs: cloudMin * 60_000,
     maxCodeIterations: config.max_code_iterations,
     round: 0,
-    maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds)
+    maxRounds: Math.max(1, options.maxRounds ?? config.max_rounds),
+    acceptanceSuite: null
   };
 
   try {
     // Round 0 begins with diverse drafts + synthesis; revision rounds re-plan from the brief.
     let plan = await runPlanPhase(ctx);
     let roundBase = baseRef;
+
+    // Acceptance gate (when manifest.acceptanceCmd is set): derive the canonical
+    // suite from the plan, commit it into a new base every lane is cut from, and
+    // grade implementations against it. No-op otherwise.
+    const acceptance = await runAcceptancePhase(ctx, plan);
+    if (acceptance) {
+      ctx.acceptanceSuite = acceptance.suite;
+      ctx.baseRef = acceptance.baseRef;
+      roundBase = acceptance.baseRef;
+    }
+
     let selection: SelectionOutcome | null = null;
     let finalWorktrees: Worktree[] = [];
     let roundsRun = 0;
@@ -164,12 +177,25 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
   }
 }
 
-/** A round has converged when the winner is green, voted to meet criteria, and the brief is empty. */
+/**
+ * A round has converged when the winner is green and there's no open work. With
+ * the acceptance gate on, "done" is objective — the winner must pass the FULL
+ * canonical suite and not have weakened it (review votes become advisory). Without
+ * the gate, we fall back to the review "meets criteria" vote.
+ */
 function isConverged(selection: SelectionOutcome, outcomes: CodeOutcome[]): boolean {
   const winner = outcomes.find((o) => o.agentId === selection.winnerAgentId);
-  const green = !!winner && winner.build.passed && winner.tests.failed === 0;
-  const meets = selection.scoreboard.find((s) => s.agentId === selection.winnerAgentId)?.meets ?? false;
+  if (!winner) return false;
+  const green = winner.build.passed && winner.tests.failed === 0;
   const noOpenWork = selection.revisionBrief.mustFix.length === 0 && selection.revisionBrief.stillNeeded.length === 0;
+
+  if (winner.acceptance) {
+    const acc = winner.acceptance;
+    const passesAll = acc.total > 0 && acc.passedVsCanonical === acc.total && !acc.weakened;
+    return green && passesAll && noOpenWork;
+  }
+
+  const meets = selection.scoreboard.find((s) => s.agentId === selection.winnerAgentId)?.meets ?? false;
   return green && meets && noOpenWork;
 }
 

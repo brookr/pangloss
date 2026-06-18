@@ -92,4 +92,42 @@ describe('selectWinner', () => {
   it('returns null when there are no findings', () => {
     expect(selectWinner(outcomes, [])).toBeNull();
   });
+
+  describe('with the acceptance gate on', () => {
+    // W: weakened its tests — passes its own suite but only 1/3 of the canonical
+    //    bar — yet reviewers loved it (100). P: passes the full canonical suite,
+    //    middling review (70). The gate must pick P, not the higher-scored weakener.
+    const accOutcomes: CodeOutcome[] = [
+      outcome('W', {
+        green: true,
+        acceptance: { total: 3, passedVsCanonical: 1, passedVsModified: 3, modified: true, weakened: true, verdict: 'weakened', detail: '' }
+      }),
+      outcome('P', {
+        green: true,
+        acceptance: { total: 3, passedVsCanonical: 3, passedVsModified: 3, modified: false, weakened: false, verdict: 'clean', detail: '' }
+      })
+    ];
+    const accFindings: ReviewFinding[] = [
+      finding('W', 'W', 100),
+      finding('W', 'P', 70),
+      finding('P', 'W', 100),
+      finding('P', 'P', 70)
+    ];
+
+    it('picks the lane that passes the canonical suite over a higher-scored weakener', () => {
+      const sel = selectWinner(accOutcomes, accFindings)!;
+      expect(sel.winnerAgentId).toBe('P');
+      expect(sel.reason).toMatch(/Acceptance 100%/);
+    });
+
+    it('ranks by canonical pass-rate, not review score', () => {
+      // Both clean, but H passes more of the canonical bar despite a lower review score.
+      const o: CodeOutcome[] = [
+        outcome('L', { green: true, acceptance: { total: 4, passedVsCanonical: 2, passedVsModified: 2, modified: false, weakened: false, verdict: 'clean', detail: '' } }),
+        outcome('H', { green: true, acceptance: { total: 4, passedVsCanonical: 4, passedVsModified: 4, modified: false, weakened: false, verdict: 'clean', detail: '' } })
+      ];
+      const f: ReviewFinding[] = [finding('L', 'L', 95), finding('L', 'H', 60), finding('H', 'L', 95), finding('H', 'H', 60)];
+      expect(selectWinner(o, f)!.winnerAgentId).toBe('H');
+    });
+  });
 });

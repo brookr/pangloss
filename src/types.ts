@@ -71,6 +71,20 @@ export interface TargetManifest {
   test?: string;
   /** Optional end-to-end command (e.g. Playwright). */
   e2e?: string;
+  /**
+   * Directory (relative to the repo root) where the spec-derived acceptance
+   * suite lives. Defaults to "acceptance". Agents may refine these tests, but
+   * weakening them is detected and penalized (see the acceptance phase/audit).
+   */
+  acceptanceDir?: string;
+  /**
+   * Command that runs ONLY the acceptance suite and prints a parseable summary
+   * (e.g. `npx jest acceptance --silent`). When set, Pangloss generates the
+   * suite from the plan's acceptance_criteria and uses pass-rate-against-the-
+   * canonical-suite as the primary selection signal. When unset, the acceptance
+   * gate is disabled and the pipeline behaves exactly as before.
+   */
+  acceptanceCmd?: string;
   /** Optional long-running app start command (backgrounded for E2E). */
   start?: string;
   /** First port handed to worktree 0; subsequent worktrees get base + index*offset. */
@@ -164,6 +178,48 @@ export interface PanglossPlan {
 }
 
 // ---------------------------------------------------------------------------
+// Acceptance gate — spec-derived, mutable-but-audited tests
+// ---------------------------------------------------------------------------
+
+/** One acceptance-test file: path relative to the repo root + its contents. */
+export interface AcceptanceFile {
+  path: string;
+  content: string;
+}
+
+/** The canonical acceptance suite (C₀) generated from the plan's criteria. */
+export interface AcceptanceSuite {
+  files: AcceptanceFile[];
+  /** acceptance_criteria each file/test is meant to cover (for traceability). */
+  criteria: string[];
+  /** Was each test confirmed to FAIL on the base code (non-vacuous)? */
+  redOnBase: boolean;
+}
+
+/**
+ * Per-lane audit of how an implementation fared against the acceptance contract,
+ * and whether the lane's edits to the tests strengthened or weakened it. The
+ * trustworthy signal is `passedVsCanonical` — the lane's implementation graded
+ * against the ORIGINAL C₀, regardless of what the lane did to its own copy.
+ */
+export interface AcceptanceAudit {
+  /** Size of the canonical suite C₀. */
+  total: number;
+  /** Lane's implementation vs the ORIGINAL canonical suite (the real bar). */
+  passedVsCanonical: number;
+  /** Lane's implementation vs its own (possibly modified) suite. */
+  passedVsModified: number;
+  /** Did the lane edit the acceptance tests at all? */
+  modified: boolean;
+  /** Objective weakening: passes its own suite but fails the canonical bar, or removed/loosened assertions. */
+  weakened: boolean;
+  /** clean = untouched; clarified = edited but still meets canonical; weakened = moved the goalposts. */
+  verdict: 'clean' | 'clarified' | 'weakened';
+  /** Human-readable explanation + any notable diff signals. */
+  detail: string;
+}
+
+// ---------------------------------------------------------------------------
 // Live pipeline outcomes
 // ---------------------------------------------------------------------------
 
@@ -180,6 +236,8 @@ export interface CodeOutcome {
   filesChanged: string[];
   diffStat?: string;
   notesForReviewers: string[];
+  /** Acceptance-gate audit, when the gate is enabled (manifest.acceptanceCmd set). */
+  acceptance?: AcceptanceAudit;
   durationMs: number;
   error?: string;
 }

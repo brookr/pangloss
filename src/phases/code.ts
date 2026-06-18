@@ -12,6 +12,7 @@ import { createRuntime } from '../runtime.js';
 import { runShell } from '../util/proc.js';
 import { mapPool } from '../util/pool.js';
 import { codePrompt } from './prompts.js';
+import { auditLane } from './acceptance.js';
 
 export interface CodePhaseResult {
   outcomes: CodeOutcome[];
@@ -149,7 +150,7 @@ async function runOneAgent(
     const diffStat = await ctx.worktrees.diffStat(wt, ctx.baseRef);
     const v = validation;
 
-    return {
+    const outcome: CodeOutcome = {
       agentId: adapter.id,
       branch: wt.branch,
       worktreePath: wt.path,
@@ -163,6 +164,11 @@ async function runOneAgent(
       notesForReviewers: status?.notes_for_reviewers ?? [],
       durationMs: Date.now() - started
     };
+
+    // Acceptance audit: grade the implementation against the ORIGINAL canonical
+    // suite and flag any weakening of the lane's own copy (no-op when gate is off).
+    outcome.acceptance = await auditLane(ctx, outcome, wt);
+    return outcome;
   } finally {
     await runtime.down();
   }

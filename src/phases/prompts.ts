@@ -1,4 +1,5 @@
 import { PanglossPlan, QA, TargetManifest } from '../types.js';
+import { acceptanceDir } from '../acceptance.js';
 
 const PLAN_SCHEMA = `{
   "summary": "1-2 sentence description of the change",
@@ -22,6 +23,13 @@ const REVIEW_SCHEMA = `{
   "still_needed": ["what is still required to fully satisfy the plan"],
   "must_fix": ["critical bugs or plan violations that must be addressed"],
   "confidence": 0.0-1.0
+}`;
+
+const acceptanceSchema = (dir: string) => `{
+  "files": [
+    { "path": "${dir}/<descriptive-name>.test.<ext>", "content": "<COMPLETE runnable test file source>" }
+  ],
+  "criteria_covered": ["which acceptance_criteria each test verifies"]
 }`;
 
 function qaBlock(clarifications: QA[]): string {
@@ -81,6 +89,44 @@ ${draftBlock}
 
 Return ONLY a JSON object matching this schema (no markdown, no prose):
 ${PLAN_SCHEMA}`;
+}
+
+export function acceptanceDraftPrompt(plan: PanglossPlan, dir: string): string {
+  return `You are writing the ACCEPTANCE TESTS that will define "done" for the plan
+below — the objective gate every implementation must pass. Inspect the repository
+(read-only) FIRST: identify the test framework, conventions, and the exact import
+paths/modules these tests must exercise.
+
+PLAN & ACCEPTANCE CRITERIA:
+${JSON.stringify(plan, null, 2)}
+
+Write executable tests, in the repo's existing framework, that:
+- Verify EACH acceptance criterion concretely (specific inputs → specific expected outputs). Prefer strict matchers (exact equality), not loose truthiness.
+- Exercise the REAL code/modules under test via their real import paths — not mocks of the thing being built.
+- MUST FAIL on the current code (the feature isn't implemented yet). You are encoding the target behavior, not the present behavior.
+- Live entirely under the "${dir}/" directory.
+
+Return ONLY a JSON object matching this schema (no markdown, no prose):
+${acceptanceSchema(dir)}`;
+}
+
+export function acceptanceSynthPrompt(plan: PanglossPlan, dir: string, drafts: unknown[]): string {
+  const block = drafts.map((d, i) => `### Draft ${i + 1}\n${JSON.stringify(d, null, 2)}`).join('\n\n');
+  return `You are the SYNTHESIZER for the ACCEPTANCE TESTS. Several agents drafted
+test suites for the same plan. Merge them into ONE canonical suite — the strongest,
+most complete gate. Keep the strictest assertion for each behavior, cover every
+acceptance criterion, drop duplicates and anything that doesn't map to a criterion,
+and ensure the tests would FAIL on the current (unimplemented) code. Inspect the
+repository (read-only) to keep import paths and framework usage correct.
+
+PLAN & ACCEPTANCE CRITERIA:
+${JSON.stringify(plan, null, 2)}
+
+DRAFT TEST SUITES:
+${block}
+
+Return ONLY a JSON object matching this schema (no markdown, no prose):
+${acceptanceSchema(dir)}`;
 }
 
 export function reviseSynthesisPrompt(plan: PanglossPlan, feedback: string): string {
@@ -145,6 +191,12 @@ export function codePrompt(
     ? `\nA previous attempt left failures. Fix them. Latest validation output (tail):\n\`\`\`\n${feedbackTail}\n\`\`\`\n`
     : '';
 
+  const acceptanceSection = manifest.acceptanceCmd
+    ? `\nACCEPTANCE GATE — the tests under "${acceptanceDir(manifest.acceptanceDir)}/" define "done". Run them with:
+- acceptance: ${manifest.acceptanceCmd}
+Make ALL of them pass. You MAY refine an acceptance test ONLY to correct a genuinely wrong expectation (e.g. it asserts the wrong value or a mistaken API shape) — and you must explain why in your status notes. Your implementation is ALSO graded against the ORIGINAL acceptance suite, so weakening a test (removing/loosening assertions to make a broken implementation pass) cannot help you and will be penalized. Strengthening or clarifying is welcome.\n`
+    : '';
+
   const intro = revision
     ? `Your worktree ALREADY CONTAINS a working implementation — the winner chosen last round. IMPROVE it by applying the revision plan below; do NOT rewrite from scratch, and preserve what already passes.`
     : `Implement the following plan in your current worktree.`;
@@ -156,7 +208,7 @@ ${JSON.stringify(plan, null, 2)}
 
 VALIDATION COMMANDS (run these to check your work; iterate until green):
 ${cmds || '(none configured)'}
-${feedbackSection}
+${acceptanceSection}${feedbackSection}
 Requirements:
 1. Implement every step and satisfy every acceptance criterion.
 2. Add or update tests that prove the acceptance criteria.

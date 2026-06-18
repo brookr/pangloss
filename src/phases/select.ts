@@ -40,6 +40,7 @@ export function selectWinner(outcomes: CodeOutcome[], findings: ReviewFinding[])
   const scored = [...tallies.values()].map((t) => {
     const outcome = outcomeById.get(t.candidate);
     const green = !!outcome && outcome.build.passed && outcome.tests.failed === 0 && outcome.filesChanged.length > 0;
+    const acc = outcome?.acceptance;
     return {
       candidate: t.candidate,
       branch: t.branch,
@@ -47,20 +48,41 @@ export function selectWinner(outcomes: CodeOutcome[], findings: ReviewFinding[])
       meetsVotes: t.meetsVotes,
       testsPassed: outcome?.tests.passed ?? 0,
       remaining: outcome?.remainingWork.length ?? 0,
-      green
+      green,
+      hasAcc: !!acc,
+      // Trustworthy signal: implementation graded against the ORIGINAL canonical suite.
+      accRate: acc && acc.total > 0 ? acc.passedVsCanonical / acc.total : null,
+      weakened: acc?.weakened ?? false
     };
   });
 
-  // Prefer green (build passes, no failing tests) candidates; if none, consider all.
-  const pool = scored.some((s) => s.green) ? scored.filter((s) => s.green) : scored;
+  const gateOn = scored.some((s) => s.hasAcc);
 
-  pool.sort(
-    (a, b) =>
-      b.score - a.score ||
-      b.meetsVotes - a.meetsVotes ||
-      b.testsPassed - a.testsPassed ||
-      a.remaining - b.remaining
-  );
+  let pool: typeof scored;
+  if (gateOn) {
+    // Acceptance gate: a lane cannot win by weakening its own tests — rank by
+    // canonical pass-rate first, demote anyone who weakened the contract, keep
+    // green as a regression guard, and use review score only to break ties.
+    pool = scored.slice().sort(
+      (a, b) =>
+        Number(a.weakened) - Number(b.weakened) ||
+        (b.accRate ?? 0) - (a.accRate ?? 0) ||
+        Number(b.green) - Number(a.green) ||
+        b.score - a.score ||
+        b.meetsVotes - a.meetsVotes ||
+        a.remaining - b.remaining
+    );
+  } else {
+    // No gate: original behavior — prefer green, then highest review score.
+    pool = scored.some((s) => s.green) ? scored.filter((s) => s.green) : scored;
+    pool.sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.meetsVotes - a.meetsVotes ||
+        b.testsPassed - a.testsPassed ||
+        a.remaining - b.remaining
+    );
+  }
 
   const winner = pool[0];
   const winnerOutcome = outcomeById.get(winner.candidate);
@@ -73,10 +95,14 @@ export function selectWinner(outcomes: CodeOutcome[], findings: ReviewFinding[])
     winnerBranch: winner.branch,
     winnerWorktree: winnerOutcome.worktreePath,
     score: round1(winner.score),
-    reason:
-      `Highest cross-model score (${round1(winner.score)}/100` +
-      `, ${winner.meetsVotes} "meets criteria" vote(s)` +
-      `${winner.green ? ', build+tests green' : ', best available though not green'}).`,
+    reason: gateOn
+      ? `Acceptance ${winner.accRate !== null ? Math.round(winner.accRate * 100) : '?'}% of canonical` +
+        `${winner.weakened ? ' (others weakened — penalized)' : ''}` +
+        `${winner.green ? ', build+tests green' : ', not fully green'}` +
+        `, review ${round1(winner.score)}/100.`
+      : `Highest cross-model score (${round1(winner.score)}/100` +
+        `, ${winner.meetsVotes} "meets criteria" vote(s)` +
+        `${winner.green ? ', build+tests green' : ', best available though not green'}).`,
     revisionBrief,
     scoreboard: scored
       .slice()
