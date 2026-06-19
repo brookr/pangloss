@@ -162,6 +162,15 @@ export class AgentAdapter {
         if (preset.oss) {
           args.push('--oss', '--local-provider', preset.localProvider ?? 'ollama');
         }
+        if (preset.localProvider === 'lmstudio') {
+          // LM Studio's OpenAI-compat server supports `function` tools but NOT
+          // codex's freeform "custom" apply_patch (it drops the tool-call stream:
+          // "No tool call streamer found"). Force the function-style apply_patch,
+          // which LM Studio handles — otherwise edits silently never land.
+          // (Verified 3/3 edits land with this; the deprecated
+          // experimental_use_freeform_apply_patch key is silently ignored.)
+          args.push('-c', 'features.apply_patch_freeform=false');
+        }
         // Cap reasoning effort for the cost-sensitive (OpenRouter) and the
         // slow-by-default (local oss) lanes — the user's global codex config may
         // default to xhigh, which is impractically slow locally and pricey on
