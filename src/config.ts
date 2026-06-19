@@ -238,8 +238,9 @@ function resolvePreset(config: PanglossConfig, id: string): AgentPreset {
  * tool can be dropped into a roster without editing config. Supported prefixes:
  *   openrouter:/or:  -> codex via OpenRouter      cursor:  -> cursor-agent
  *   claude:          -> claude CLI                gemini:  -> gemini CLI
- *   codex:           -> codex (cloud)             oss:/codex-oss: -> codex --oss (local)
- * e.g. `cursor:claude-4.5-sonnet`, `openrouter:anthropic/claude-sonnet-4.6`.
+ *   codex:           -> codex (cloud)             oss:/codex-oss: -> codex --oss (Ollama)
+ *   lmstudio:/lms:   -> codex --oss (LM Studio, http://localhost:1234)
+ * e.g. `cursor:claude-4.5-sonnet`, `openrouter:anthropic/claude-sonnet-4.6`, `lmstudio:openai/gpt-oss-120b`.
  */
 export function parseDynamicPreset(id: string): AgentPreset | null {
   const match = id.match(/^([a-z0-9-]+):(.+)$/i);
@@ -279,6 +280,17 @@ export function parseDynamicPreset(id: string): AgentPreset | null {
         localProvider: 'ollama',
         local: true,
         label: `${model} (local oss)`
+      };
+    case 'lmstudio':
+    case 'lms':
+      return {
+        id: slug('lms'),
+        tool: 'codex',
+        model,
+        oss: true,
+        localProvider: 'lmstudio',
+        local: true,
+        label: `${model} (LM Studio)`
       };
     default:
       return null;
