@@ -155,16 +155,21 @@ export class AgentAdapter {
             '-c',
             'model_providers.openrouter.env_key="OPENROUTER_API_KEY"',
             '-c',
-            'model_providers.openrouter.wire_api="responses"',
-            // Frugality: cap reasoning effort (the user's global codex config may
-            // default to xhigh, which inflates token usage on paid OpenRouter).
-            '-c',
-            `model_reasoning_effort="${opts.mode === 'code' ? 'medium' : 'low'}"`
+            'model_providers.openrouter.wire_api="responses"'
           );
         }
         args.push('-m', preset.model);
         if (preset.oss) {
           args.push('--oss', '--local-provider', preset.localProvider ?? 'ollama');
+        }
+        // Cap reasoning effort for the cost-sensitive (OpenRouter) and the
+        // slow-by-default (local oss) lanes — the user's global codex config may
+        // default to xhigh, which is impractically slow locally and pricey on
+        // OpenRouter. Local lanes prioritize speed (low); OpenRouter gets medium
+        // for the code phase where it matters most.
+        if (preset.openrouter || preset.oss) {
+          const effort = preset.oss ? 'low' : opts.mode === 'code' ? 'medium' : 'low';
+          args.push('-c', `model_reasoning_effort="${effort}"`);
         }
         args.push('-s', writable ? 'workspace-write' : 'read-only');
         args.push('--skip-git-repo-check');
