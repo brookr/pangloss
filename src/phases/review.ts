@@ -75,50 +75,61 @@ export async function runReviewPhase(
   );
 
   const findings = await mapPool(jobs, ctx.config.max_parallel_agents, async ({ reviewer, candidate }) => {
-    const wt = candidate.worktree;
-    const startSha = await ctx.worktrees.headSha(wt);
-    const res = await reviewer.run({
-      mode: 'review',
-      prompt: reviewPrompt({
-        plan,
-        candidateLabel: candidate.label,
-        summary: candidate.outcome.summary,
-        build: candidate.outcome.build.passed ? 'pass' : 'fail',
-        tests: `${candidate.outcome.tests.passed}/${candidate.outcome.tests.total} (failed ${candidate.outcome.tests.failed})`,
-        diffStat: candidate.outcome.diffStat ?? '',
-        diff: candidate.diff,
-        conventions: ctx.conventions?.full ?? null,
-        acceptance: candidate.outcome.acceptance
-          ? {
-              verdict: candidate.outcome.acceptance.verdict,
-              passedVsCanonical: candidate.outcome.acceptance.passedVsCanonical,
-              total: candidate.outcome.acceptance.total,
-              modified: candidate.outcome.acceptance.modified
-            }
-          : null
-      }),
-      cwd: wt.path,
-      system: composeSystem(reviewer.preset, 'review'),
-      timeoutMs: reviewer.timeoutMs,
-      onRetry: (m) => ctx.logger.agent(reviewer.id, chalk.yellow(`(reviewing ${candidate.outcome.agentId}) ${m}`))
-    });
-
-    const violated = await ctx.worktrees.enforceReadOnly(wt, startSha);
-    if (violated) ctx.logger.agent(reviewer.id, chalk.yellow(`mutated ${candidate.outcome.agentId}'s worktree during review — reverted`));
-
-    const raw = extractJsonBlock<RawReview>(res.stdout);
-    if (!raw) {
-      ctx.logger.agent(reviewer.id, chalk.yellow(`review of ${candidate.outcome.agentId} unparseable`));
+    try {
+      return await reviewOne(ctx, plan, reviewer, candidate);
+    } catch (err) {
+      ctx.logger.agent(reviewer.id, chalk.yellow(`review of ${candidate.outcome.agentId} errored — skipped (${err instanceof Error ? err.message : String(err)})`));
       return null;
     }
-    ctx.logger.agent(
-      reviewer.id,
-      `reviewed ${chalk.bold(candidate.outcome.agentId)} → ${clampScore(raw.overall_score)}/100`
-    );
-    return coerceFinding(raw, reviewer.id, candidate.outcome);
   });
 
   return findings.filter((f): f is ReviewFinding => f !== null);
+}
+
+async function reviewOne(
+  ctx: RunContext,
+  plan: PanglossPlan,
+  reviewer: RunContext['adapters'][number],
+  candidate: CandidateCtx
+): Promise<ReviewFinding | null> {
+  const wt = candidate.worktree;
+  const startSha = await ctx.worktrees.headSha(wt);
+  const res = await reviewer.run({
+    mode: 'review',
+    prompt: reviewPrompt({
+      plan,
+      candidateLabel: candidate.label,
+      summary: candidate.outcome.summary,
+      build: candidate.outcome.build.passed ? 'pass' : 'fail',
+      tests: `${candidate.outcome.tests.passed}/${candidate.outcome.tests.total} (failed ${candidate.outcome.tests.failed})`,
+      diffStat: candidate.outcome.diffStat ?? '',
+      diff: candidate.diff,
+      conventions: ctx.conventions?.full ?? null,
+      acceptance: candidate.outcome.acceptance
+        ? {
+            verdict: candidate.outcome.acceptance.verdict,
+            passedVsCanonical: candidate.outcome.acceptance.passedVsCanonical,
+            total: candidate.outcome.acceptance.total,
+            modified: candidate.outcome.acceptance.modified
+          }
+        : null
+    }),
+    cwd: wt.path,
+    system: composeSystem(reviewer.preset, 'review'),
+    timeoutMs: reviewer.timeoutMs,
+    onRetry: (m) => ctx.logger.agent(reviewer.id, chalk.yellow(`(reviewing ${candidate.outcome.agentId}) ${m}`))
+  });
+
+  const violated = await ctx.worktrees.enforceReadOnly(wt, startSha);
+  if (violated) ctx.logger.agent(reviewer.id, chalk.yellow(`mutated ${candidate.outcome.agentId}'s worktree during review — reverted`));
+
+  const raw = extractJsonBlock<RawReview>(res.stdout);
+  if (!raw) {
+    ctx.logger.agent(reviewer.id, chalk.yellow(`review of ${candidate.outcome.agentId} unparseable`));
+    return null;
+  }
+  ctx.logger.agent(reviewer.id, `reviewed ${chalk.bold(candidate.outcome.agentId)} → ${clampScore(raw.overall_score)}/100`);
+  return coerceFinding(raw, reviewer.id, candidate.outcome);
 }
 
 function coerceFinding(raw: RawReview, reviewer: string, candidate: CodeOutcome): ReviewFinding {

@@ -29,6 +29,8 @@ export interface AdapterRunResult {
   code: number | null;
   timedOut: boolean;
   durationMs: number;
+  /** Exited 0 but produced no output — a silently-broken lane (cursor/gemini headless). */
+  emptyOutput?: boolean;
   /** How many attempts were made (1 = succeeded/failed first try). */
   attempts?: number;
 }
@@ -260,8 +262,13 @@ export class AgentAdapter {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
+        const okExit = code === 0 && !timedOut;
+        const empty = stdout.trim().length === 0;
         resolve({
-          ok: code === 0 && !timedOut,
+          // A lane that exits 0 but says nothing is NOT a success — it's a
+          // silently-broken lane that would otherwise vanish from the fusion.
+          ok: okExit && !empty,
+          emptyOutput: okExit && empty,
           stdout,
           stderr,
           code,
@@ -322,6 +329,9 @@ const TRANSIENT_RE =
 /** A failure worth retrying: not ok, not a wall-clock timeout, and looks transient. */
 export function isTransientFailure(res: AdapterRunResult): boolean {
   if (res.ok || res.timedOut) return false;
+  // Exited 0 with no output (headless cursor/gemini hiccup) — retry rather than
+  // let the lane silently drop out of the fusion.
+  if (res.emptyOutput) return true;
   return TRANSIENT_RE.test(`${res.stderr}\n${res.stdout}`);
 }
 

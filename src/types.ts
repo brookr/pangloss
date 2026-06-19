@@ -149,6 +149,8 @@ export interface PanglossConfig {
   max_rounds: number;
   /** Max retries per model call on transient/rate-limit (429) failures (exponential backoff). */
   max_retries: number;
+  /** Abort a round if fewer than this many lanes produce changes (default 1 = warn-only). Set ≥2 to require real fusion. */
+  min_lanes?: number;
   /**
    * Establish a project conventions guide (Phase 0) from documented conventions +
    * git-history patterns, cached under .pangloss/, and feed it to every phase.

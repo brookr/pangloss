@@ -44,21 +44,26 @@ export async function runAcceptancePhase(ctx: RunContext, plan: PanglossPlan): P
   // --- diverse drafts ---
   const drafts = (
     await mapPool(ctx.adapters, ctx.config.max_parallel_agents, async (adapter) => {
-      const res = await adapter.run({
-        mode: 'plan',
-        prompt: acceptanceDraftPrompt(plan, dir, ctx.conventions?.full),
-        cwd: ctx.repoRoot,
-        system: composeSystem(adapter.preset, 'plan'),
-        timeoutMs: adapter.timeoutMs,
-        onRetry: (m) => ctx.logger.agent(adapter.id, chalk.yellow(m))
-      });
-      const files = normalizeFiles(extractJsonBlock<RawSuite>(res.stdout), dir);
-      if (!files.length) {
-        ctx.logger.agent(adapter.id, chalk.yellow('acceptance draft unparseable — skipped'));
+      try {
+        const res = await adapter.run({
+          mode: 'plan',
+          prompt: acceptanceDraftPrompt(plan, dir, ctx.conventions?.full),
+          cwd: ctx.repoRoot,
+          system: composeSystem(adapter.preset, 'plan'),
+          timeoutMs: adapter.timeoutMs,
+          onRetry: (m) => ctx.logger.agent(adapter.id, chalk.yellow(m))
+        });
+        const files = normalizeFiles(extractJsonBlock<RawSuite>(res.stdout), dir);
+        if (!files.length) {
+          ctx.logger.agent(adapter.id, chalk.yellow('acceptance draft unparseable — skipped'));
+          return null;
+        }
+        ctx.logger.agent(adapter.id, chalk.green(`drafted ${files.length} acceptance file(s)`));
+        return files;
+      } catch (err) {
+        ctx.logger.agent(adapter.id, chalk.yellow(`acceptance draft errored — skipped (${err instanceof Error ? err.message : String(err)})`));
         return null;
       }
-      ctx.logger.agent(adapter.id, chalk.green(`drafted ${files.length} acceptance file(s)`));
-      return files;
     })
   ).filter((f): f is AcceptanceFile[] => f !== null);
 

@@ -20,6 +20,11 @@ describe('isTransientFailure', () => {
     expect(isTransientFailure(res({ timedOut: true, stderr: '429' }))).toBe(false); // a wall-clock timeout, not a 429
     expect(isTransientFailure(res({ stderr: "SyntaxError: unexpected token" }))).toBe(false);
   });
+
+  it('retries an exited-0-but-empty lane (the silent cursor/gemini drop)', () => {
+    expect(isTransientFailure(res({ emptyOutput: true, code: 0 }))).toBe(true);
+    expect(isTransientFailure(res({ emptyOutput: true, timedOut: true }))).toBe(false); // never retry a timeout
+  });
 });
 
 describe('retryDelayMs', () => {

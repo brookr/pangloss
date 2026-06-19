@@ -125,6 +125,25 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       await writeFile(join(roundDir, 'code-outcomes.json'), JSON.stringify(outcomes, null, 2));
       summarizeOutcomes(logger, outcomes);
 
+      // Lane-survival guard: surface (don't silently absorb) lanes that dropped
+      // out — a degraded fusion is still selectable, but a 1-candidate "fusion"
+      // is just solo with extra steps.
+      const survivors = outcomes.filter((o) => !o.error && o.filesChanged.length > 0).length;
+      if (survivors < ctx.adapters.length) {
+        logger.warn(chalk.yellow(`⚠ Only ${survivors}/${ctx.adapters.length} lanes produced changes — fusion degraded this round.`));
+      }
+      const minLanes = ctx.config.min_lanes ?? 1;
+      if (survivors < minLanes) {
+        return {
+          runId,
+          success: false,
+          selection: null,
+          rounds: round + 1,
+          runDir,
+          error: `Too few lanes survived (${survivors} < min_lanes ${minLanes}).`
+        };
+      }
+
       const findings = await runReviewPhase(ctx, plan, outcomes, worktrees);
       await writeFile(join(roundDir, 'reviews.json'), JSON.stringify(findings, null, 2));
 
@@ -164,6 +183,11 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
         for (const wt of worktrees) await ctx.worktrees.remove(wt, false);
       }
       roundBase = selection.winnerBranch;
+      // Per-round diffs (changedFiles/diffStat/reviewer diff) must be taken against
+      // the branch each worktree is actually cut from — keep baseRef in lock-step
+      // with roundBase, or revision rounds diff against the original base (bloated
+      // diffs, truncation, and a dead no-progress early-stop).
+      ctx.baseRef = roundBase;
       ctx.round = round + 1;
       logger.info(chalk.gray(`\nRevising the winner (${selection.winnerAgentId}) → round ${round + 1}…`));
       plan = await runRevisionPlan(ctx, plan, selection);
