@@ -152,10 +152,17 @@ export async function auditLane(
 
   // 1. lane's implementation vs its OWN (possibly modified) suite
   const modRun = await runAcceptance(cmd, wt.path, ctx.timeoutMs);
-  // 2. lane's implementation vs the ORIGINAL canonical suite (swap in, run, restore)
-  writeSuiteDir(wt.path, dir, canonical);
-  const origRun = await runAcceptance(cmd, wt.path, ctx.timeoutMs);
-  if (laneFiles.length > 0) writeSuiteDir(wt.path, dir, laneFiles);
+  // 2. lane's implementation vs the ORIGINAL canonical suite (swap in, run, ALWAYS restore).
+  // The try/finally guarantees the lane's own suite is restored even if the run
+  // throws/times out — otherwise the selected branch could be left holding the
+  // canonical suite (or an empty dir), silently mutating the winner.
+  let origRun;
+  try {
+    writeSuiteDir(wt.path, dir, canonical);
+    origRun = await runAcceptance(cmd, wt.path, ctx.timeoutMs);
+  } finally {
+    if (laneFiles.length > 0) writeSuiteDir(wt.path, dir, laneFiles);
+  }
 
   const total = origRun.total || canonical.length;
   const weakSig = weakeningSignal(canonical, laneFiles);

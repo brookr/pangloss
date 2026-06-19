@@ -106,9 +106,16 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     // grade implementations against it. No-op otherwise.
     const acceptance = await runAcceptancePhase(ctx, plan);
     if (acceptance) {
-      ctx.acceptanceSuite = acceptance.suite;
       ctx.baseRef = acceptance.baseRef;
       roundBase = acceptance.baseRef;
+      // Enforce red-on-base: a suite that passes on the base code is vacuous, so
+      // it must NOT drive selection. Keep it in the worktree (informative) but
+      // leave the gate off — fall back to review-based selection.
+      if (acceptance.suite.redOnBase) {
+        ctx.acceptanceSuite = acceptance.suite;
+      } else {
+        logger.warn(chalk.yellow('⚠ Acceptance suite is NOT red on base (vacuous) — gate is advisory only; selecting on review this run.'));
+      }
     }
 
     let selection: SelectionOutcome | null = null;

@@ -31,6 +31,8 @@ export interface AdapterRunResult {
   durationMs: number;
   /** Exited 0 but produced no output — a silently-broken lane (cursor/gemini headless). */
   emptyOutput?: boolean;
+  /** Rough token proxy ((prompt+output chars)/4) — text-mode CLIs expose no usage; good enough for relative cost. */
+  approxTokens?: number;
   /** How many attempts were made (1 = succeeded/failed first try). */
   attempts?: number;
 }
@@ -269,6 +271,7 @@ export class AgentAdapter {
           // silently-broken lane that would otherwise vanish from the fusion.
           ok: okExit && !empty,
           emptyOutput: okExit && empty,
+          approxTokens: Math.ceil((promptText.length + stdout.length) / 4),
           stdout,
           stderr,
           code,
