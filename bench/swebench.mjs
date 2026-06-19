@@ -41,6 +41,7 @@ const INSTANCES = arg('instances', 'all');
 const TIMEOUT = parseInt(arg('timeout', '15'), 10);
 const CONC = parseInt(arg('concurrency', '2'), 10);
 const ROUNDS = parseInt(arg('rounds', '1'), 10); // fusion rounds (1 = single round; >1 enables the revise loop)
+const GATE = process.argv.includes('--gate'); // diverse mode: objective acceptance gate (runs the suite in the instance Docker image)
 
 const tasks = JSON.parse(readFileSync(join(SWE, 'tasks.json'), 'utf8')).filter(
   (t) => INSTANCES === 'all' || INSTANCES.split(',').includes(t.instance_id)
@@ -90,7 +91,9 @@ const PATCH_EXCLUDES = [
   '":(exclude,glob)**/tests/**"', '":(exclude,glob)tests/**"',
   '":(exclude,glob)**/test_*.py"', '":(exclude,glob)test_*.py"',
   '":(exclude,glob)**/*_test.py"', '":(exclude,glob)*_test.py"',
-  '":(exclude,glob)**/conftest.py"', '":(exclude)conftest.py"'
+  '":(exclude,glob)**/conftest.py"', '":(exclude)conftest.py"',
+  // gate-on runs: the agent-derived acceptance suite must never leak into the prediction.
+  '":(exclude,glob)acceptance/**"', '":(exclude,glob)**/acceptance/**"'
 ].join(' ');
 
 /** Diff of `dir` vs baseRef, source-only — this is the SWE-bench patch. */
@@ -129,7 +132,15 @@ async function generate(task) {
       });
       return capturePatch(work, baseRef);
     }
-    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, conventions: false, manifest: { setup: '', build: '', test: '' } };
+    const manifest = { setup: '', build: '', test: '' };
+    if (GATE) {
+      // Objective gate: agents derive a pytest acceptance suite under acceptance/,
+      // graded INSIDE the instance's SWE-bench Docker image (the host can't run the
+      // old pinned Python). The hidden FAIL_TO_PASS is never touched.
+      manifest.acceptanceDir = 'acceptance';
+      manifest.acceptanceCmd = `node "${join(HERE, 'swe', 'acc-docker.mjs')}" ${task.instance_id} acceptance`;
+    }
+    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, conventions: false, manifest };
     const cfgPath = join(work, 'swe.config.json');
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     const result = await executeRun({
