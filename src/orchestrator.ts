@@ -4,6 +4,7 @@ import { join } from 'path';
 import { AgentAdapter } from './agents/adapter.js';
 import { loadConfig, resolveRoster } from './config.js';
 import { Logger, RunContext } from './context.js';
+import { installSignalCleanup } from './cleanup.js';
 import { runPlanPhase, runRevisionPlan } from './phases/plan.js';
 import { runAcceptancePhase } from './phases/acceptance.js';
 import { establishConventions } from './phases/conventions.js';
@@ -56,6 +57,8 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
   await mkdir(runDir, { recursive: true });
 
   const logger = createConsoleLogger();
+  // Tear down per-agent Docker stacks on Ctrl-C / kill instead of leaking them.
+  installSignalCleanup((m) => logger.warn(chalk.yellow(m)));
   const baseRef = await currentSha(options.repoRoot);
 
   logger.info(

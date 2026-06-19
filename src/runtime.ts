@@ -3,6 +3,7 @@ import { isAbsolute, join } from 'path';
 import YAML from 'yaml';
 import { ComposeConfig, TargetManifest } from './types.js';
 import { ProcResult, run, runShell } from './util/proc.js';
+import { onCleanup } from './cleanup.js';
 
 export type RuntimeEnv = Record<string, string>;
 
@@ -49,6 +50,7 @@ export class ComposeRuntime implements AgentRuntime {
   private readonly generatedFile: string;
   private readonly dbService: string;
   private readonly containerPort: number;
+  private unregisterCleanup?: () => void;
 
   constructor(private readonly opts: ComposeRuntimeOpts) {
     const c = opts.config;
@@ -75,6 +77,8 @@ export class ComposeRuntime implements AgentRuntime {
     this.opts.log(`compose up (project ${this.project}, ${this.dbService} → :${this.hostPort})`);
     const upRes = await this.compose(['up', '-d']);
     if (!upRes.ok) throw new Error(`compose up failed: ${(upRes.stderr || upRes.stdout).slice(-400)}`);
+    // Stack is live — ensure it's torn down even if the process is interrupted.
+    this.unregisterCleanup = onCleanup(() => this.down());
 
     await this.waitForDb(c.readyTimeoutMs ?? 60_000);
 
@@ -90,6 +94,8 @@ export class ComposeRuntime implements AgentRuntime {
   }
 
   async down(): Promise<void> {
+    this.unregisterCleanup?.();
+    this.unregisterCleanup = undefined;
     await this.compose(['down', '-v']).catch(() => undefined);
   }
 
