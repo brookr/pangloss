@@ -183,13 +183,22 @@ function isGreen(v: ValidationResult): boolean {
  * Give the worktree its dependencies cheaply: symlink the main checkout's
  * node_modules when present (fast path for same-repo dogfooding), otherwise run
  * the manifest's setup command.
+ *
+ * Exception: pnpm/yarn WORKSPACE monorepos must NOT symlink — the root
+ * node_modules contains workspace symlinks (`@repo/*` → ../packages/*) that
+ * resolve back to the MAIN checkout, so a lane's edits to a workspace package
+ * would never be exercised. There we run the setup command (a real install) so
+ * the worktree's node_modules points at the worktree's own packages.
  */
 async function prepareDeps(ctx: RunContext, wt: Worktree, agentId: string): Promise<void> {
   const rootNM = join(ctx.repoRoot, 'node_modules');
   const wtNM = join(wt.path, 'node_modules');
   if (existsSync(wtNM)) return;
 
-  if (existsSync(rootNM)) {
+  const isWorkspaceMonorepo =
+    existsSync(join(ctx.repoRoot, 'pnpm-workspace.yaml')) || existsSync(join(wt.path, 'pnpm-workspace.yaml'));
+
+  if (!isWorkspaceMonorepo && existsSync(rootNM)) {
     try {
       await symlink(rootNM, wtNM, 'dir');
       ctx.logger.agent(agentId, chalk.gray('linked node_modules from main checkout'));

@@ -1,0 +1,10 @@
+{
+  "manifest": {
+    "setup": "pnpm install --frozen-lockfile --prefer-offline",
+    "build": "",
+    "test": "pnpm --filter @repo/agent-supervisor-chat-tests test:unit",
+    "e2e": ""
+  },
+  "max_code_iterations": 3,
+  "max_rounds": 2
+}
