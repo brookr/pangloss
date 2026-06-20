@@ -13,31 +13,71 @@ Named after Voltaire's Pangloss ("the best of all possible worlds").
 
 ## Architecture (current — worktree-based, Docker retired)
 
-Every run loops over four phases. Each agent works in its **own git worktree**
-(isolated checkout + branch under `.pangloss/runs/<run>/round-<n>/worktrees/`).
+Each agent works in its **own git worktree** (isolated checkout + branch
+`pangloss/<runId>/r<round>/<agentId>` under `.pangloss/runs/<run>/round-<n>/`).
 Agents run **on the host** (not in containers), so each CLI uses its own existing
-auth — this is why there's no credential injection anywhere.
+auth — this is why there's no credential injection anywhere. A run
+([src/orchestrator.ts](src/orchestrator.ts)) executes in this order:
 
-1. **PLAN** ([src/phases/plan.ts](src/phases/plan.ts)) — N agents draft plans
-   independently; a *rotating* synthesizer (`synth_rotation`) merges them into
-   one canonical plan. Optional human approval gate (skipped with `--yes` /
-   `--non-interactive`).
-2. **CODE** ([src/phases/code.ts](src/phases/code.ts)) — each agent implements
-   the plan in its worktree, runs the manifest's build/test commands, iterates to
-   green (up to `max_code_iterations`), commits. node_modules is symlinked from
-   the main checkout for speed.
-3. **REVIEW** ([src/phases/review.ts](src/phases/review.ts)) — every agent
-   reviews every implementation read-only (N×N matrix): score, novel ideas, gaps,
-   still-needed. The worktree boundary is enforced as a read-only backstop.
-4. **SELECT** ([src/phases/select.ts](src/phases/select.ts)) — weighted vote
+**Phase 0 — CONVENTIONS** ([src/phases/conventions.ts](src/phases/conventions.ts))
+— before anything else, derive a project conventions guide (documented conventions
+authoritative + git-history patterns observed) and cache it at
+`.pangloss/conventions.md`. Stored on `ctx.conventions` (condensed for plan, full
+for code/review) and injected into every later phase. No-op if nothing to learn.
+
+**Phase 1 — PLAN** ([src/phases/plan.ts](src/phases/plan.ts)) — N agents draft
+plans independently; a *rotating* synthesizer (`synth_rotation` / `pickSynthesizer`)
+merges them into one canonical plan. Optional human approval gate (skipped with
+`--yes` / `--non-interactive`).
+
+**Acceptance gate (optional)** ([src/phases/acceptance.ts](src/phases/acceptance.ts))
+— when `manifest.acceptanceCmd` is set, agents derive a canonical acceptance suite
+from the plan; it's committed into a **new base every lane is cut from**, and impls
+are graded against it. The suite must be **red on base** (a suite green on base is
+vacuous → gate goes advisory, selection falls back to review). The post-gate base
+is captured as `originBase` — the run's true origin — so the security audit later
+sees the COMPLETE change. No-op when `acceptanceCmd` is unset.
+
+**Round loop** (`max_rounds`, default 3) — each round:
+
+1. **CODE** ([src/phases/code.ts](src/phases/code.ts)) — each agent implements the
+   plan in its worktree, runs build/test, iterates to green (up to
+   `max_code_iterations`), commits. node_modules is symlinked from the main checkout
+   (real `pnpm install` for workspace monorepos). A lane-survival guard surfaces
+   dropped lanes; the run aborts if survivors `< min_lanes`.
+2. **REVIEW** ([src/phases/review.ts](src/phases/review.ts)) — every agent reviews
+   every impl read-only (N×N): score, novel ideas, gaps, still-needed, acceptance-
+   edit annotations. The worktree boundary is a read-only backstop.
+3. **SELECT** ([src/phases/select.ts](src/phases/select.ts)) — weighted vote
    (self-reviews down-weighted 0.5), green-preferred; emits a **revision brief**
-   (must-fix + novel ideas to graft from the also-rans + still-needed).
+   (must-fix + ideas to graft from the also-rans + still-needed). With the gate on,
+   "done" is objective: pass the FULL canonical suite without weakening it.
+4. **REVISE** — if not converged, re-base every agent on the WINNING branch
+   (`ctx.baseRef` tracks `roundBase`), turn the brief into a revision plan
+   (`runRevisionPlan`), run the next round. Stops on convergence, a no-progress
+   guard (`treesIdentical` to the prior winner), or `max_rounds`.
 
-**Revise-loop** ([src/orchestrator.ts](src/orchestrator.ts)): if the winner
-isn't converged (green + meets-criteria + empty must-fix/still-needed), re-base
-every agent on the WINNING branch, turn the brief into a revision plan
-(`runRevisionPlan`), and run the round again. Stops on convergence or
-`max_rounds` (default 3).
+**Phase 5 — SECURITY AUDIT** ([src/phases/security.ts](src/phases/security.ts)) —
+the final threshold, on the winner before cleanup. Every model audits the winner's
+**full diff vs `originBase`** (line-boundary capped at `MAX_DIFF`; auditors are told
+when it's truncated); a rotating synthesizer dedupes into one verdict. Passes with
+no high/critical findings. **Fails CLOSED**: a systemic audit failure (0 usable
+auditors) is treated as NOT-passed, and unrecognized severities escalate (never
+silently sink to `low`). Pure, chalk-free helpers live in
+[src/security-util.ts](src/security-util.ts) (`coerceFindings` / `coerceSeverity` /
+`securityVerdict` / `highFindings` / `securityFixPlan`), unit-tested in
+[__tests__/security.test.ts](__tests__/security.test.ts). No-op when
+`security_audit: false` (bench sets this) or the winner has no diff.
+
+**Auto-hardening** (`hardenWinner`, `max_security_rounds`, default 1) — on a failed
+audit, `securityFixPlan` turns the high/critical findings into a deterministic
+must-fix plan (no extra model call), then runs fix rounds *fusion-style*: re-base
+every lane on the winner → CODE → REVIEW → SELECT → re-audit. Rounds use
+`ctx.round = 100 + i` so dirs/branches never collide with the main loop; each round
+diffs vs the prior winner (reviewers see only the fix) but re-audits vs `originBase`.
+The prior winner's worktree stays live until a fix is **accepted** (a failed round
+strands nothing). Stops on a clean audit or the cap. Set `max_security_rounds: 0`
+to make the audit advisory.
 
 ## Roster / adapter model
 
@@ -97,6 +137,10 @@ node dist/cli.js doctor --roster <name>   # preflight a roster
 ## Status
 
 - ✅ Full pipeline + revise-loop working end-to-end (validated by dogfood runs).
+- ✅ Phase 5 security audit + auto-hardening validated live: a planted SQLi +
+  command-injection + missing-authz winner is caught (FAILED), one hardening round
+  remediates all three, re-audit flips to PASSED. Fail-closed/fail-safe paths and
+  pure helpers covered in [__tests__/security.test.ts](__tests__/security.test.ts).
 - ✅ All five harnesses validated live in runs: claude-code, cursor,
   codex→OpenRouter, gemini (needs `GOOGLE_CLOUD_PROJECT` — set in `.env`), and
   local `codex --oss` (gpt-oss:120b — functional but slow, ~19 min for a small

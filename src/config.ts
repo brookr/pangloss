@@ -177,7 +177,8 @@ export function getDefaultConfig(): PanglossConfig {
     max_rounds: 3,
     max_retries: 5,
     conventions: true,
-    security_audit: true
+    security_audit: true,
+    max_security_rounds: 1
   };
 }
 

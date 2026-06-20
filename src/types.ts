@@ -157,6 +157,13 @@ export interface PanglossConfig {
    */
   security_audit?: boolean;
   /**
+   * When the security audit fails (a high/critical finding), how many auto-hardening
+   * revise rounds to run — each feeds the findings back as must-fix, re-codes on top
+   * of the winner, re-selects, and re-audits. Default 1; set 0 to make the audit
+   * advisory (report only, never remediate).
+   */
+  max_security_rounds?: number;
+  /**
    * Establish a project conventions guide (Phase 0) from documented conventions +
    * git-history patterns, cached under .pangloss/, and feed it to every phase.
    * Default true; set false for throwaway targets (e.g. benchmark clones).

@@ -8,7 +8,20 @@ import { securityAuditPrompt, securitySynthPrompt } from './prompts.js';
 import { pickSynthesizer } from './plan.js';
 import { RawFinding, SEVERITY_RANK as RANK, coerceFindings, highestSeverity, securityVerdict } from '../security-util.js';
 
-const MAX_DIFF = 16000;
+const MAX_DIFF = 48000;
+
+/**
+ * Cap the diff for the prompt without silently hiding code. Slices on a line
+ * boundary (never mid-hunk) and reports whether anything was dropped, so the
+ * auditor can be told the change is partial instead of auditing a fragment it
+ * believes is complete (a truncated tail must not be read as "clean").
+ */
+function capDiff(full: string): { diff: string; truncated: boolean } {
+  if (full.length <= MAX_DIFF) return { diff: full, truncated: false };
+  const cut = full.slice(0, MAX_DIFF);
+  const lastNl = cut.lastIndexOf('\n');
+  return { diff: lastNl > 0 ? cut.slice(0, lastNl) : cut, truncated: true };
+}
 
 /**
  * Phase 5 — the FINAL threshold. Every model independently security-audits the
@@ -19,15 +32,23 @@ const MAX_DIFF = 16000;
 export async function runSecurityAudit(
   ctx: RunContext,
   plan: PanglossPlan,
-  selection: SelectionOutcome
+  selection: SelectionOutcome,
+  baseRef?: string
 ): Promise<SecurityAudit | null> {
   if (ctx.config.security_audit === false) return null;
 
   const winner = { agentId: selection.winnerAgentId, branch: selection.winnerBranch, path: selection.winnerWorktree };
-  const diff = (await ctx.worktrees.fullDiff(winner, ctx.baseRef)).slice(0, MAX_DIFF);
-  if (!diff.trim()) return null;
+  // Always audit the COMPLETE change (feature + any hardening), so diff against the
+  // run's origin base — not ctx.baseRef, which advances to a winner branch across
+  // revise/hardening rounds (that would shrink the audit to just the latest delta).
+  const fullDiff = await ctx.worktrees.fullDiff(winner, baseRef ?? ctx.baseRef);
+  if (!fullDiff.trim()) return null;
+  const { diff, truncated } = capDiff(fullDiff);
 
   ctx.logger.phase('Phase 5 — Security audit: every model audits the winner, then synthesize');
+  if (truncated) {
+    ctx.logger.warn(chalk.yellow(`⚠ Winner diff is ${fullDiff.length} chars — auditing the first ${diff.length} (auditors told it is partial).`));
+  }
 
   // Each lane audits the winning diff independently.
   const audits = (
@@ -35,7 +56,7 @@ export async function runSecurityAudit(
       try {
         const res = await adapter.run({
           mode: 'review',
-          prompt: securityAuditPrompt(plan, diff, ctx.conventions?.full),
+          prompt: securityAuditPrompt(plan, diff, ctx.conventions?.full, truncated),
           cwd: winner.path,
           system: composeSystem(adapter.preset, 'review'),
           timeoutMs: adapter.timeoutMs,
@@ -60,6 +81,16 @@ export async function runSecurityAudit(
     })
   ).filter((a): a is { auditor: string; findings: SecurityFinding[] } => a !== null);
 
+  // Fail CLOSED: if no auditor produced a usable result (every lane errored / was
+  // unparseable — e.g. a shared rate-limit or auth outage), do NOT report PASS. A
+  // systemic audit failure must be indistinguishable from "vulnerable", never from
+  // "clean". `auditors: 0` is the tell; there are no findings to harden, so the
+  // hardening loop will record it for manual review rather than spin a empty round.
+  if (audits.length === 0) {
+    ctx.logger.warn(chalk.red('\n🔒 Security audit INCONCLUSIVE — no auditor produced a usable result; failing closed (treated as NOT passed).'));
+    return { findings: [], highestSeverity: 'none', passed: false, summary: 'Inconclusive: no auditor produced a parseable result.', auditors: 0 };
+  }
+
   // Synthesize one verdict (dedupe, keep highest severity, drop false positives).
   let findings: SecurityFinding[];
   let summary = '';
@@ -73,7 +104,11 @@ export async function runSecurityAudit(
       timeoutMs: synth.timeoutMs
     });
     const raw = extractJsonBlock<{ findings?: RawFinding[]; summary?: string }>(res.stdout);
-    findings = raw?.findings ? coerceFindings(raw.findings) : audits.flatMap((a) => a.findings);
+    // A parseable synth result that omits `findings` means "clean" → []. Only fall
+    // back to the raw union of every lane's findings when the synth output is wholly
+    // unparseable (raw === null) — otherwise the synth's dedup/false-positive
+    // filtering is silently discarded and FPs resurface.
+    findings = raw ? coerceFindings(raw.findings ?? []) : audits.flatMap((a) => a.findings);
     summary = String(raw?.summary ?? '');
   } catch {
     findings = audits.flatMap((a) => a.findings);

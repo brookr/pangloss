@@ -248,15 +248,19 @@ const SECURITY_SCHEMA = `{
   "overall": "one-line security summary"
 }`;
 
-export function securityAuditPrompt(plan: PanglossPlan, diff: string, conventions?: string | null): string {
+export function securityAuditPrompt(plan: PanglossPlan, diff: string, conventions?: string | null, truncated = false): string {
   return `You are a security auditor performing the FINAL security review of a code
 change before it ships. Audit ONLY for security — not style, not general
 correctness. You are read-only and anonymized.
 
 PLAN & INTENT:
 ${JSON.stringify({ summary: plan.summary, scope: plan.scope, acceptance_criteria: plan.acceptance_criteria }, null, 2)}
-${conventions ? `\nPROJECT SECURITY CONVENTIONS (apply the security-relevant ones):\n${conventions}\n` : ''}
-THE WINNING CHANGE (unified diff):
+${conventions ? `\nPROJECT SECURITY CONVENTIONS (apply the security-relevant ones):\n${conventions}\n` : ''}${
+    truncated
+      ? `\nNOTE: the diff below is TRUNCATED — you are seeing only the beginning of the change. Audit what is shown, but do NOT treat the unseen remainder as clean; flag that your view is partial if it matters.\n`
+      : ''
+  }
+THE WINNING CHANGE (unified diff${truncated ? ', truncated' : ''}):
 \`\`\`diff
 ${diff}
 \`\`\`

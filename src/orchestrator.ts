@@ -12,7 +12,8 @@ import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
 import { runSecurityAudit } from './phases/security.js';
-import { CodeOutcome, ReviewFinding, SecurityAudit, SelectionOutcome } from './types.js';
+import { highFindings, securityFixPlan } from './security-util.js';
+import { CodeOutcome, PanglossPlan, ReviewFinding, SecurityAudit, SelectionOutcome } from './types.js';
 import { Worktree, WorktreeManager } from './worktree.js';
 import { run } from './util/proc.js';
 
@@ -124,6 +125,11 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       }
     }
 
+    // The run's true origin base (post-acceptance-gate). The security audit always
+    // diffs the winner against this, so it sees the COMPLETE change regardless of how
+    // far ctx.baseRef has advanced across revise/hardening rounds.
+    const originBase = roundBase;
+
     let selection: SelectionOutcome | null = null;
     let finalWorktrees: Worktree[] = [];
     let roundsRun = 0;
@@ -210,7 +216,18 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     // synthesized into one verdict. Runs before cleanup (needs the winner worktree).
     let securityAudit: SecurityAudit | null = null;
     if (selection) {
-      securityAudit = await runSecurityAudit(ctx, plan, selection);
+      securityAudit = await runSecurityAudit(ctx, plan, selection, originBase);
+      // Auto-harden: a high/critical finding feeds the findings back as must-fix into
+      // a focused revise round (re-code on the winner → re-select → re-audit), up to
+      // max_security_rounds. Set max_security_rounds: 0 to make the audit advisory.
+      if (securityAudit && !securityAudit.passed && (ctx.config.max_security_rounds ?? 1) > 0) {
+        const hardened = await hardenWinner(ctx, plan, selection, securityAudit, finalWorktrees, originBase, options.keepWorktrees);
+        selection = hardened.selection;
+        securityAudit = hardened.securityAudit;
+        plan = hardened.plan;
+        finalWorktrees = hardened.worktrees;
+        roundsRun += hardened.extraRounds;
+      }
       if (securityAudit) await writeFile(join(runDir, 'security-audit.json'), JSON.stringify(securityAudit, null, 2));
     }
 
@@ -226,6 +243,116 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
     logger.warn(chalk.red(`Run failed: ${error}`));
     return { runId, success: false, selection: null, rounds: 0, runDir, error };
   }
+}
+
+// Security-hardening rounds use round numbers offset far above the main revise
+// loop so their worktree dirs (round-<n>) and branches (…/r<n>/…) never collide.
+const SECURITY_ROUND_BASE = 100;
+
+/**
+ * Auto-hardening: when the security audit fails, feed the high/critical findings
+ * back as a must-fix revision and run focused fix rounds on top of the winner —
+ * re-code (every lane fixes it, fusion-style) → review → select → re-audit — until
+ * the audit passes or max_security_rounds is exhausted. Each round diffs against the
+ * prior winner (so reviewers see only the fix), but re-audits against `originBase`
+ * (the complete change). Keeps the prior winner if a round can't improve on it.
+ */
+export async function hardenWinner(
+  ctx: RunContext,
+  plan: PanglossPlan,
+  selection: SelectionOutcome,
+  audit: SecurityAudit,
+  worktrees: Worktree[],
+  originBase: string,
+  keepWorktrees: boolean
+): Promise<{ selection: SelectionOutcome; securityAudit: SecurityAudit; plan: PanglossPlan; worktrees: Worktree[]; extraRounds: number }> {
+  const maxRounds = Math.max(0, ctx.config.max_security_rounds ?? 1);
+  let curSel = selection;
+  let curAudit = audit;
+  let curPlan = plan;
+  // curWts is the set of worktrees that backs curSel — kept ALIVE until a fix round
+  // is actually accepted, so curSel.winnerWorktree always names a directory that
+  // exists on disk (a failed round must not strand the winner on a deleted path).
+  let curWts = worktrees;
+  let extraRounds = 0;
+  const drop = async (wts: Worktree[]) => {
+    if (!keepWorktrees) for (const wt of wts) await ctx.worktrees.remove(wt, false);
+  };
+
+  for (let i = 0; i < maxRounds && !curAudit.passed; i++) {
+    const high = highFindings(curAudit.findings);
+    if (high.length === 0) {
+      // Not passed but nothing actionable to remediate (e.g. an inconclusive audit
+      // with no findings). Spinning a fix round would be empty — stop here.
+      ctx.logger.warn(chalk.yellow('Security audit not passed but has no actionable high/critical findings — skipping hardening.'));
+      break;
+    }
+    ctx.logger.phase(
+      `Phase 5b — Security hardening (round ${i + 1}/${maxRounds}): ${high.length} ${curAudit.highestSeverity} finding(s) → must-fix`
+    );
+
+    // Re-base every lane on the current winner and revise it (mirrors the main loop).
+    const roundBase = curSel.winnerBranch;
+    ctx.baseRef = roundBase;
+    ctx.round = SECURITY_ROUND_BASE + i;
+
+    const fixPlan = securityFixPlan(curPlan, curAudit);
+    const roundDir = join(ctx.runDir, `security-round-${i}`);
+    await mkdir(roundDir, { recursive: true });
+    await writeFile(join(roundDir, 'plan.json'), JSON.stringify(fixPlan, null, 2));
+
+    const { outcomes, worktrees: wts } = await runCodePhase(ctx, fixPlan, roundBase, true);
+    await writeFile(join(roundDir, 'code-outcomes.json'), JSON.stringify(outcomes, null, 2));
+    summarizeOutcomes(ctx.logger, outcomes);
+
+    // Decide whether this attempt actually improves on the prior winner.
+    const survivors = outcomes.filter((o) => !o.error && o.filesChanged.length > 0).length;
+    let newSel: SelectionOutcome | null = null;
+    if (survivors === 0) {
+      ctx.logger.warn(chalk.yellow('No lane produced a security fix — keeping the prior winner (findings stand).'));
+    } else {
+      const findings = await runReviewPhase(ctx, fixPlan, outcomes, wts);
+      await writeFile(join(roundDir, 'reviews.json'), JSON.stringify(findings, null, 2));
+      newSel = selectWinner(outcomes, findings);
+      if (!newSel) ctx.logger.warn(chalk.yellow('No winner selected in the security round — keeping the prior winner.'));
+      else if (await ctx.worktrees.treesIdentical(roundBase, newSel.winnerBranch)) {
+        ctx.logger.warn(chalk.yellow('Security hardening produced no change vs the prior winner — stopping.'));
+        newSel = null;
+      }
+    }
+
+    if (!newSel) {
+      // Discard the failed attempt; the prior winner (curWts) stays intact and valid.
+      await drop(wts);
+      break;
+    }
+
+    // Accepted: retire the now-superseded prior worktrees and adopt the new winner.
+    await writeFile(join(roundDir, 'selection.json'), JSON.stringify(newSel, null, 2));
+    await drop(curWts);
+    curWts = wts;
+    curSel = newSel;
+    curPlan = fixPlan;
+    extraRounds += 1;
+
+    const reAudit = await runSecurityAudit(ctx, fixPlan, newSel, originBase);
+    if (reAudit) {
+      curAudit = reAudit;
+      await writeFile(join(roundDir, 'security-audit.json'), JSON.stringify(reAudit, null, 2));
+    }
+    if (curAudit.passed) {
+      ctx.logger.info(chalk.green(`\n🔒 Security hardening cleared all high/critical findings after round ${i + 1}.`));
+    }
+  }
+
+  if (!curAudit.passed) {
+    ctx.logger.warn(
+      chalk.red(
+        `\n🔒 Security audit still failing after hardening (${curAudit.highestSeverity}). Winner kept; findings recorded in security-audit.json for manual review.`
+      )
+    );
+  }
+  return { selection: curSel, securityAudit: curAudit, plan: curPlan, worktrees: curWts, extraRounds };
 }
 
 /**
