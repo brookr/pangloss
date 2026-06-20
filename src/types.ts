@@ -152,6 +152,11 @@ export interface PanglossConfig {
   /** Abort a round if fewer than this many lanes produce changes (default 1 = warn-only). Set ≥2 to require real fusion. */
   min_lanes?: number;
   /**
+   * Run a final multi-model security audit over the winning change and synthesize
+   * one verdict (the last threshold). Default true; set false for throwaway targets.
+   */
+  security_audit?: boolean;
+  /**
    * Establish a project conventions guide (Phase 0) from documented conventions +
    * git-history patterns, cached under .pangloss/, and feed it to every phase.
    * Default true; set false for throwaway targets (e.g. benchmark clones).
@@ -233,6 +238,34 @@ export interface AcceptanceAudit {
   verdict: 'clean' | 'clarified' | 'weakened';
   /** Human-readable explanation + any notable diff signals. */
   detail: string;
+}
+
+// ---------------------------------------------------------------------------
+// Security audit — the final synthesized threshold over the winning change
+// ---------------------------------------------------------------------------
+
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'none';
+
+export interface SecurityFinding {
+  severity: Severity;
+  /** e.g. injection, authz, authn, secrets, ssrf, path-traversal, deserialization, xss, crypto, dos. */
+  category: string;
+  /** file:line or symbol where it lives. */
+  location: string;
+  detail: string;
+  recommendation: string;
+}
+
+/** Consolidated multi-model security verdict on the winning implementation. */
+export interface SecurityAudit {
+  /** Deduped, synthesized findings from every auditor. */
+  findings: SecurityFinding[];
+  highestSeverity: Severity;
+  /** Passes the threshold when there are no high/critical findings. */
+  passed: boolean;
+  summary: string;
+  /** How many auditors contributed. */
+  auditors: number;
 }
 
 // ---------------------------------------------------------------------------

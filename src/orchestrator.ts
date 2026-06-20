@@ -11,7 +11,8 @@ import { establishConventions } from './phases/conventions.js';
 import { runCodePhase } from './phases/code.js';
 import { runReviewPhase } from './phases/review.js';
 import { selectWinner } from './phases/select.js';
-import { CodeOutcome, ReviewFinding, SelectionOutcome } from './types.js';
+import { runSecurityAudit } from './phases/security.js';
+import { CodeOutcome, ReviewFinding, SecurityAudit, SelectionOutcome } from './types.js';
 import { Worktree, WorktreeManager } from './worktree.js';
 import { run } from './util/proc.js';
 
@@ -37,6 +38,8 @@ export interface RunResult {
   selection: SelectionOutcome | null;
   rounds: number;
   runDir: string;
+  /** Final multi-model security verdict over the winner (null when disabled). */
+  securityAudit?: SecurityAudit | null;
   error?: string;
 }
 
@@ -203,13 +206,21 @@ export async function executeRun(options: RunOptions): Promise<RunResult> {
       plan = await runRevisionPlan(ctx, plan, selection);
     }
 
-    await writeFile(join(runDir, 'final-selection.json'), JSON.stringify({ rounds: roundsRun, selection }, null, 2));
+    // Phase 5 — the final threshold: multi-model security audit of the winner,
+    // synthesized into one verdict. Runs before cleanup (needs the winner worktree).
+    let securityAudit: SecurityAudit | null = null;
+    if (selection) {
+      securityAudit = await runSecurityAudit(ctx, plan, selection);
+      if (securityAudit) await writeFile(join(runDir, 'security-audit.json'), JSON.stringify(securityAudit, null, 2));
+    }
+
+    await writeFile(join(runDir, 'final-selection.json'), JSON.stringify({ rounds: roundsRun, selection, securityAudit }, null, 2));
     if (selection) {
       await finalCleanup(ctx, finalWorktrees, selection, options.keepWorktrees);
       logger.info(chalk.gray(`\nArtifacts: ${join('.pangloss', 'runs', runId)}/  (${roundsRun} round(s))`));
       logger.info(chalk.gray(`Winner worktree kept at: ${selection.winnerWorktree}`));
     }
-    return { runId, success: Boolean(selection), selection, rounds: roundsRun, runDir };
+    return { runId, success: Boolean(selection), selection, rounds: roundsRun, runDir, securityAudit };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.warn(chalk.red(`Run failed: ${error}`));

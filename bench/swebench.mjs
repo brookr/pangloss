@@ -140,7 +140,7 @@ async function generate(task) {
       manifest.acceptanceDir = 'acceptance';
       manifest.acceptanceCmd = `node "${join(HERE, 'swe', 'acc-docker.mjs')}" ${task.instance_id} acceptance`;
     }
-    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, conventions: false, manifest };
+    const cfg = { ...getDefaultConfig(), max_rounds: ROUNDS, max_retries: 6, conventions: false, security_audit: false, manifest };
     const cfgPath = join(work, 'swe.config.json');
     writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     const result = await executeRun({

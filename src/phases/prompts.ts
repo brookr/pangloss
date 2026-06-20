@@ -235,6 +235,62 @@ Requirements:
 Begin now.`;
 }
 
+const SECURITY_SCHEMA = `{
+  "findings": [
+    {
+      "severity": "critical | high | medium | low",
+      "category": "injection | authz | authn | secrets | ssrf | path-traversal | deserialization | xss | crypto | dos | input-validation | other",
+      "location": "file:line or symbol",
+      "detail": "the vulnerability and a concrete exploit path",
+      "recommendation": "the specific fix"
+    }
+  ],
+  "overall": "one-line security summary"
+}`;
+
+export function securityAuditPrompt(plan: PanglossPlan, diff: string, conventions?: string | null): string {
+  return `You are a security auditor performing the FINAL security review of a code
+change before it ships. Audit ONLY for security — not style, not general
+correctness. You are read-only and anonymized.
+
+PLAN & INTENT:
+${JSON.stringify({ summary: plan.summary, scope: plan.scope, acceptance_criteria: plan.acceptance_criteria }, null, 2)}
+${conventions ? `\nPROJECT SECURITY CONVENTIONS (apply the security-relevant ones):\n${conventions}\n` : ''}
+THE WINNING CHANGE (unified diff):
+\`\`\`diff
+${diff}
+\`\`\`
+
+Hunt for vulnerabilities the change INTRODUCES or leaves exposed: injection
+(SQL/command/template), broken authz/authn or tenancy scoping, secret/credential
+exposure, SSRF, path traversal, unsafe deserialization, XSS, weak crypto, DoS,
+and missing validation at trust boundaries. Be specific and exploit-oriented.
+Report ONLY real issues with a concrete exploit path — do not pad with generic
+advice. If the change is clean, return an empty findings array.
+
+Return ONLY a JSON object matching this schema (no markdown, no prose):
+${SECURITY_SCHEMA}`;
+}
+
+export function securitySynthPrompt(plan: PanglossPlan, audits: unknown[]): string {
+  return `You are the SECURITY LEAD consolidating several independent security audits
+of ONE change into a single verdict. Merge the auditors' findings: dedupe the
+same issue (keep the HIGHEST severity any auditor gave it), DROP false positives
+(a finding the diff does not actually support), and keep only real, exploitable
+issues. Do not invent new findings beyond what the auditors raised.
+
+CHANGE INTENT: ${plan.summary}
+
+INDEPENDENT AUDITS:
+${JSON.stringify(audits, null, 2)}
+
+Return ONLY a JSON object matching this schema (no markdown, no prose):
+{
+  "findings": [ { "severity": "critical|high|medium|low", "category": "...", "location": "...", "detail": "...", "recommendation": "..." } ],
+  "summary": "the consolidated security verdict in one or two sentences"
+}`;
+}
+
 export function conventionsPrompt(docsText: string, corpusText: string): string {
   const documented = docsText
     ? `DOCUMENTED CONVENTIONS (AUTHORITATIVE — these take precedence; preserve their rules and intent, and NEVER contradict them):\n${docsText}\n`
