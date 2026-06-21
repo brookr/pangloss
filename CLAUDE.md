@@ -137,6 +137,11 @@ node dist/cli.js doctor --roster <name>   # preflight a roster
 ## Status
 
 - ✅ Full pipeline + revise-loop working end-to-end (validated by dogfood runs).
+- ✅ DB-gated web-app loop: ran a fusion on gamma where ComposeRuntime spun up an
+  isolated per-lane Postgres and the app's db-tests integration suite ran in-loop as
+  the selection gate (38/38 per lane). `manifest.provision` supplies gitignored env
+  files into worktrees; `scripts/relax-db-port-guard.mjs` adapts apps whose tests pin
+  a DB port. Config: `msi-gamma-db.config.json`.
 - ✅ Full-stack milestone: ran the whole loop on the real MSI web app (gamma,
   pnpm/turbo Next.js monorepo) for a DB-coupled task; winner verified against an
   isolated Postgres (db-tests integration 38/38). Roadmap to the complete web-app

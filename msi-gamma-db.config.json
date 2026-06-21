@@ -1,0 +1,25 @@
+{
+  "manifest": {
+    "setup": "pnpm install --frozen-lockfile --prefer-offline",
+    "build": "pnpm --filter agent-supervisor-chat run types:check",
+    "test": "pnpm --filter @repo/db-tests run test:integration",
+    "e2e": "",
+    "compose": {
+      "file": "docker-compose.yml",
+      "dbService": "db",
+      "dbContainerPort": 5432,
+      "dbPortBase": 5460,
+      "urlEnv": "DATABASE_URL",
+      "urlTemplate": "postgresql://test_user:test_password@localhost:{port}/test_db",
+      "dbSetup": "pnpm --filter=db exec drizzle-kit migrate && node /Users/brookr/projects/pangloss/scripts/relax-db-port-guard.mjs packages/db-tests/src/globalSetup.ts",
+      "readyTimeoutMs": 90000
+    }
+  },
+  "max_code_iterations": 2,
+  "max_rounds": 1,
+  "min_lanes": 2,
+  "max_parallel_agents": 2,
+  "conventions": true,
+  "security_audit": true,
+  "max_security_rounds": 1
+}

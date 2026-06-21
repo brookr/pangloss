@@ -20,39 +20,26 @@ it cold. Update it as tasks land.
   audit PASSED. Validated in-loop on `types:check` + unit tests; the winner's batched
   `ensureDocumentModelLinks` then verified against an **isolated gamma Postgres** —
   full db-tests integration suite **38/38 green**. Config: `msi-gamma-fullstack.config.json`.
+- **✅ Task 1 — worktree provisioning (DONE, `08e6c71`):** `manifest.provision: string[]`
+  copies gitignored files into each worktree before setup. `src/provision.ts` (chalk-free,
+  path-safe, unit-tested).
+- **✅ Task 2 — DB-integration as an IN-LOOP gate (DONE):** ran a real DB-gated fusion on
+  gamma — ComposeRuntime brought up isolated per-lane Postgres (5460/5461, never 5432),
+  drizzle-migrate via `dbSetup`, and the db-tests integration suite ran **38/38 per lane
+  as the selection gate**. Winner diff stayed clean (the `:5432` test guard is relaxed +
+  `skip-worktree`d by `scripts/relax-db-port-guard.mjs`, never committed). Config:
+  `msi-gamma-db.config.json`. ComposeRuntime needed no code changes — it works as built.
 
 ## The gaps (what's missing for the goal) — prioritized
 
-### 1. Worktree env/file provisioning  ← DO FIRST (pure, safe, unblocks everything)
-Web apps need gitignored files (e.g. `apps/agent-supervisor-chat/.env.local`) present
-in each worktree to build/test/e2e. Worktrees are cut from a commit, so gitignored
-files are absent. Add a manifest field, e.g.:
-```
-manifest.provision?: string[]   // repo-relative paths to copy from the main checkout
-                                 // into each worktree before `setup` runs
-```
-Implement in `src/phases/code.ts` `prepareDeps` (or a new `provisionFiles` step called
-first in `runOneAgent`). Copy each path from `ctx.repoRoot` into `wt.path` (mkdir -p
-parent; skip if missing, log). Add `provision?: string[]` to `TargetManifest` in
-`src/types.ts`. Unit-test the copy logic (chalk-free helper). This is THE blocker for
-real web-app validation in the loop.
-
-### 2. Compose runtime + DB-integration as an IN-LOOP gate (gamma)
-ComposeRuntime (`src/runtime.ts`) exists but has never been exercised in a real run.
-Wire `manifest.compose` to gamma's `docker-compose.yml`, `dbSetup` = drizzle migrate,
-`urlEnv: DATABASE_URL`, `dbPortBase` on a **unique** range (NOT 5432). Use the db-tests
-integration suite as the test/acceptance gate. Friction to solve generally:
-  - The app's db-tests guard hardcodes `:5432` (`packages/db-tests/src/globalSetup.ts`
-    regex `@[^:]+:5432/test_db`). ComposeRuntime injects a remapped port, which the
-    guard rejects. Options: (a) provision a port-relaxed copy of globalSetup via the
-    task-1 `provision` mechanism; (b) add a ComposeConfig escape so the URL the guard
-    sees matches; (c) document a per-app shim. Keep it general where possible.
-  - **SAFETY (critical):** `technician-app-bravo-db-1` owns host port **5432** and is
-    the user's ACTIVE work. The guard only checks `test_user/test_password/test_db`,
-    which bravo ALSO matches — so a misrouted DATABASE_URL would run destructive
-    fixture-resets against bravo. NEVER bind 5432; ALWAYS assert DATABASE_URL is the
-    isolated unique port before any destructive test. Verified-safe pattern from the
-    last session: rewrite compose port 5432→5455+, unique project name, migrate, run.
+### ~~1. Worktree env/file provisioning~~ — DONE (see above)
+### ~~2. Compose runtime + DB-integration as an in-loop gate~~ — DONE (see above)
+Reusable pattern for an app whose tests hardcode the DB port: ComposeRuntime publishes
+the per-lane DB on a unique host port and injects `DATABASE_URL`; the app's port-pinned
+test guard is widened (port-only, identity check kept) and `skip-worktree`d via
+`scripts/relax-db-port-guard.mjs` in `compose.dbSetup`. SAFETY: never bind 5432; the
+injected URL is the only DB the tests reach — assert the isolated port before destructive
+tests. (On a clean CI box with no competing stack, the DB can just use its native port.)
 
 ### 3. Capstone: a real user-facing feature end-to-end on gamma
 Plan→write→review→select→revise→security on a genuine UI+API+DB feature (not a
