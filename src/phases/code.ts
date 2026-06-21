@@ -13,6 +13,7 @@ import { runShell } from '../util/proc.js';
 import { mapPool } from '../util/pool.js';
 import { codePrompt } from './prompts.js';
 import { auditLane } from './acceptance.js';
+import { provisionFiles } from '../provision.js';
 
 export interface CodePhaseResult {
   outcomes: CodeOutcome[];
@@ -72,6 +73,7 @@ async function runOneAgent(
   revision: boolean
 ): Promise<CodeOutcome> {
   const started = Date.now();
+  provisionWorktree(ctx, wt, adapter.id);
   await prepareDeps(ctx, wt, adapter.id);
 
   // Per-agent runtime: an isolated Docker stack (e.g. its own Postgres) for web
@@ -177,6 +179,19 @@ async function runOneAgent(
 /** Green = build passed, no failing unit tests, and e2e (if it ran) passed. */
 function isGreen(v: ValidationResult): boolean {
   return v.build.passed && v.tests.failed === 0 && (!v.e2e.ran || v.e2e.passed);
+}
+
+/**
+ * Copy the manifest's `provision` files (gitignored env/config a web app needs)
+ * from the main checkout into the worktree before setup. No-op when unset.
+ */
+function provisionWorktree(ctx: RunContext, wt: Worktree, agentId: string): void {
+  if (!ctx.manifest.provision?.length) return;
+  const { copied, missing } = provisionFiles(ctx.repoRoot, wt.path, ctx.manifest.provision);
+  if (copied.length) ctx.logger.agent(agentId, chalk.gray(`provisioned ${copied.length} file(s)`));
+  if (missing.length) {
+    ctx.logger.agent(agentId, chalk.yellow(`provision: ${missing.length} not found in main checkout (skipped): ${missing.join(', ')}`));
+  }
 }
 
 /**

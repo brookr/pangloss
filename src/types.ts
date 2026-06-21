@@ -63,6 +63,13 @@ export interface AgentPreset {
  * running instance.
  */
 export interface TargetManifest {
+  /**
+   * Repo-relative files to copy from the MAIN checkout into each worktree BEFORE
+   * `setup` runs. For gitignored files a web app needs but a worktree (cut from a
+   * commit) lacks — e.g. `apps/web/.env.local`. These should be gitignored in the
+   * target so a lane never commits them; they're provided fresh each run.
+   */
+  provision?: string[];
   /** Install dependencies (run once per worktree before coding). */
   setup?: string;
   /** Build / typecheck command; non-zero exit = build failed. */
