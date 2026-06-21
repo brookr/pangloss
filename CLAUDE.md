@@ -137,6 +137,10 @@ node dist/cli.js doctor --roster <name>   # preflight a roster
 ## Status
 
 - ✅ Full pipeline + revise-loop working end-to-end (validated by dogfood runs).
+- ✅ Full-stack milestone: ran the whole loop on the real MSI web app (gamma,
+  pnpm/turbo Next.js monorepo) for a DB-coupled task; winner verified against an
+  isolated Postgres (db-tests integration 38/38). Roadmap to the complete web-app
+  loop in [NEXT-STEPS.md](NEXT-STEPS.md). Config: `msi-gamma-fullstack.config.json`.
 - ✅ Phase 5 security audit + auto-hardening validated live: a planted SQLi +
   command-injection + missing-authz winner is caught (FAILED), one hardening round
   remediates all three, re-audit flips to PASSED. Fail-closed/fail-safe paths and
