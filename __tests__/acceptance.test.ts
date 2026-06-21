@@ -7,8 +7,29 @@ import {
   suitesDiffer,
   readSuiteDir,
   writeSuiteDir,
-  acceptanceDir
+  acceptanceDir,
+  sanitizeSuitePath
 } from '../src/acceptance.js';
+
+describe('sanitizeSuitePath', () => {
+  it('fixes JS-style .test.py names that break pytest collection', () => {
+    // the flask-4045 gate bug: test_foo.test.py → module test_foo.test → ModuleNotFoundError
+    expect(sanitizeSuitePath('acceptance/test_blueprint.test.py')).toBe('acceptance/test_blueprint.py');
+    expect(sanitizeSuitePath('acceptance/foo.spec.py')).toBe('acceptance/test_foo.py');
+  });
+
+  it('replaces other embedded stem dots and ensures a test_ prefix', () => {
+    expect(sanitizeSuitePath('acceptance/api.v1.checks.py')).toBe('acceptance/test_api_v1_checks.py');
+    expect(sanitizeSuitePath('acceptance/checks.py')).toBe('acceptance/test_checks.py');
+  });
+
+  it('leaves already-valid pytest names and JS/TS files untouched', () => {
+    expect(sanitizeSuitePath('acceptance/test_thing.py')).toBe('acceptance/test_thing.py');
+    expect(sanitizeSuitePath('acceptance/thing_test.py')).toBe('acceptance/thing_test.py');
+    expect(sanitizeSuitePath('acceptance/thing.test.ts')).toBe('acceptance/thing.test.ts');
+    expect(sanitizeSuitePath('acceptance/Thing.spec.tsx')).toBe('acceptance/Thing.spec.tsx');
+  });
+});
 
 describe('acceptanceDir', () => {
   it('defaults and normalizes', () => {

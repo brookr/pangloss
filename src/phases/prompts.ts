@@ -112,10 +112,12 @@ PLAN & ACCEPTANCE CRITERIA:
 ${JSON.stringify(plan, null, 2)}
 ${conventions ? `\nPROJECT CONVENTIONS — encode the TESTABLE ones as acceptance tests too (e.g. tenancy scoping, validation/rejection, ordering/caps), not just the plan's criteria:\n${conventions}\n` : ''}
 Write executable tests, in the repo's existing framework, that:
-- Verify EACH acceptance criterion concretely (specific inputs → specific expected outputs). Prefer strict matchers (exact equality), not loose truthiness.
+- Verify EACH acceptance criterion concretely (specific inputs → specific expected outputs). Use strict matchers (exact equality) for VALUES and return data — not loose truthiness.
+- Test BEHAVIOR, not wording. For errors, assert the exception/error TYPE and that it is raised (e.g. \`pytest.raises(ValueError)\`); do NOT assert exact human-readable message text (at most a tolerant substring) — a correct fix may word the message differently.
+- Test the feature DIRECTLY and in isolation. Prefer calling the unit under test over standing up servers, HTTP clients, or full app/request machinery that drags in environment- and version-sensitive behavior (incidental deprecations, transitive-dependency API drift) unrelated to the change.
 - Exercise the REAL code/modules under test via their real import paths — not mocks of the thing being built.
 - MUST FAIL on the current code (the feature isn't implemented yet). You are encoding the target behavior, not the present behavior.
-- Live entirely under the "${dir}/" directory.
+- Live entirely under the "${dir}/" directory. Name files with plain framework-default names (e.g. \`test_<topic>.py\` for pytest) — no extra dotted infixes like \`.test.py\`.
 
 Return ONLY a JSON object matching this schema (no markdown, no prose):
 ${acceptanceSchema(dir)}`;
@@ -129,6 +131,12 @@ most complete gate. Keep the strictest assertion for each behavior, cover every
 acceptance criterion, drop duplicates and anything that doesn't map to a criterion,
 and ensure the tests would FAIL on the current (unimplemented) code. Inspect the
 repository (read-only) to keep import paths and framework usage correct.
+
+Prefer the most ROBUST form of each check: assert error TYPES not exact message
+wording, and test the feature directly rather than through servers/HTTP/full-app
+machinery that's sensitive to environment or dependency-version drift. Drop tests
+whose only failure mode is incidental (an upstream deprecation/API change unrelated
+to the plan). Use plain framework-default filenames (e.g. \`test_<topic>.py\`).
 
 PLAN & ACCEPTANCE CRITERIA:
 ${JSON.stringify(plan, null, 2)}

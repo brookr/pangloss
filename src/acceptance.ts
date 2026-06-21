@@ -18,6 +18,26 @@ export function acceptanceDir(dir?: string): string {
   return dir && dir.trim() ? dir.trim().replace(/^\.?\//, '').replace(/\/$/, '') : DEFAULT_DIR;
 }
 
+/**
+ * Make a model-proposed suite path safe to run. The critical case is Python:
+ * pytest imports each `.py` file as a module by its stem, so a JS-style name like
+ * `test_foo.test.py` becomes module `test_foo.test` and fails collection with
+ * `ModuleNotFoundError` (the embedded dot). Collapse `.test`/`.spec` infixes, turn
+ * any other stem dots into underscores, and guarantee a `test_`/`_test` prefix so
+ * pytest actually collects it. JS/TS files (where `.test.ts` is the convention) are
+ * left untouched.
+ */
+export function sanitizeSuitePath(path: string): string {
+  const slash = path.lastIndexOf('/');
+  const dir = slash >= 0 ? path.slice(0, slash + 1) : '';
+  const base = slash >= 0 ? path.slice(slash + 1) : path;
+  if (!base.endsWith('.py')) return path;
+  let stem = base.slice(0, -3).replace(/\.(test|spec)$/i, '');
+  stem = stem.replace(/\./g, '_');
+  if (!/^test_/.test(stem) && !/_test$/.test(stem)) stem = `test_${stem}`;
+  return `${dir}${stem}.py`;
+}
+
 /** Read every file under `<root>/<dir>` as AcceptanceFiles (paths relative to root). */
 export function readSuiteDir(root: string, dir: string): AcceptanceFile[] {
   const base = join(root, dir);

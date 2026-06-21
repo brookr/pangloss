@@ -12,6 +12,7 @@ import {
   acceptanceDir,
   readSuiteDir,
   runAcceptance,
+  sanitizeSuitePath,
   suitesDiffer,
   weakeningSignal,
   writeSuiteDir
@@ -207,6 +208,7 @@ function normalizeFiles(raw: RawSuite | null, dir: string): AcceptanceFile[] {
     let path = String(f.path ?? '').trim().replace(/^\.?\//, '');
     if (!path) continue;
     if (!path.startsWith(`${dir}/`)) path = `${dir}/${path.replace(new RegExp(`^${dir}/?`), '')}`;
+    path = sanitizeSuitePath(path);
     if (seen.has(path)) continue;
     seen.add(path);
     out.push({ path, content: f.content });
