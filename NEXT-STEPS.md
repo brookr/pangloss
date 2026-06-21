@@ -41,11 +41,30 @@ test guard is widened (port-only, identity check kept) and `skip-worktree`d via
 injected URL is the only DB the tests reach — assert the isolated port before destructive
 tests. (On a clean CI box with no competing stack, the DB can just use its native port.)
 
-### 3. Capstone: a real user-facing feature end-to-end on gamma
-Plan→write→review→select→revise→security on a genuine UI+API+DB feature (not a
-refactor). The proof of the goal. Stretch: Playwright e2e (`packages/.../e2e-tests`,
-`playwright.config.ts`) as an in-loop gate — needs the built app + dev server + DB +
-Clerk auth; heavy, lowest priority.
+### 3. Capstone: a real user-facing feature end-to-end on gamma  ← NEEDS USER INPUT
+Plan→write→review→select→revise→security on a genuine feature. This is the one
+remaining dimension: every gamma run so far has been a behavior-preserving REFACTOR
+(indexDocument batching). Two reasons this needs the user to choose the feature:
+  - **No clean candidate exists in-repo.** Only TODO left is `scheduler.ts:247`
+    (phase-3 cron sharding + bounded concurrency) — large, touches core control flow,
+    and has no existing test to gate on. Inventing a feature would be make-work in the
+    user's real app.
+  - **A refactor can't exercise the acceptance gate.** The spec-derived gate requires
+    NET-NEW behavior (must be red-on-base). A behavior-preserving change is green on
+    base → gate goes advisory. So proving the *objective acceptance gate for web
+    features* specifically needs a net-new feature with testable acceptance criteria.
+
+Good capstone shapes (pick one): a small net-new API/query + its db-test (DB-gated,
+low risk, no UI); a net-new UI+API+DB feature (needs the acceptance gate or e2e to
+gate the UI); or the `scheduler.ts` sharding refactor (write the missing scale test
+first, then gate on it). Stretch for any: Playwright e2e (`packages/.../e2e-tests`,
+`playwright.config.ts`) as an in-loop gate — needs built app + dev server + DB + Clerk
+auth; heavy, lowest priority.
+
+When running the acceptance gate on gamma, reuse the `msi-gamma-db.config.json` compose
+block and set `manifest.acceptanceCmd` to a runner that executes the `acceptance/` dir
+against the injected isolated `DATABASE_URL` (those tests are separate from the app's
+`packages/db-tests`, so they sidestep its port guard entirely).
 
 ## Hard constraints (always)
 - **Only touch `~/projects/msi/technician-app-gamma`.** Never bravo or delta. Don't
